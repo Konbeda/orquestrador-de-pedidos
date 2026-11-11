@@ -8,6 +8,9 @@ on:
 permissions:
   contents: read
 
+# Runner image pinned on purpose: ubuntu-latest moved to 26.04 (kernel 7.0) without
+# notice and MongoDB 8.0 stopped starting. Changing the OS is a deliberate commit.
+
 # A newer push to the same branch cancels the run still going.
 concurrency:
   group: ci-${{ github.ref }}
@@ -16,13 +19,13 @@ concurrency:
 jobs:
   checks:
     name: Typecheck, lint and unit tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Installs the pnpm version pinned in package.json (packageManager).
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -33,12 +36,12 @@ jobs:
 
   containers:
     name: Integration and e2e (MongoDB + Redis via Testcontainers)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -50,9 +53,9 @@ jobs:
 
   docker:
     name: Docker image builds
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Same image the README's `docker compose --profile app up --build` runs.
       - run: docker build --tag orders-orchestrator:ci .
