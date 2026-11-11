@@ -6,9 +6,12 @@ import {
 /** Records jobs and, like BullMQ, ignores a jobId it already holds. */
 export class FakeEnrichmentQueue extends EnrichmentQueue {
   readonly jobs: EnrichmentJob[] = [];
+  /** Every enqueue call, including the ones that failed. */
+  attempts = 0;
   private failuresLeft = 0;
 
   async enqueue(job: EnrichmentJob): Promise<void> {
+    this.attempts += 1;
     if (this.failuresLeft > 0) {
       this.failuresLeft -= 1;
       throw new Error('Redis unavailable');
@@ -17,8 +20,13 @@ export class FakeEnrichmentQueue extends EnrichmentQueue {
     this.jobs.push(job);
   }
 
-  /** The next `times` enqueue calls fail, as if Redis were down. */
+  /** The next `times` enqueue calls fail, as if Redis were down. `Infinity` keeps it down. */
   failNext(times = 1): void {
     this.failuresLeft = times;
+  }
+
+  /** Redis is back. */
+  recover(): void {
+    this.failuresLeft = 0;
   }
 }

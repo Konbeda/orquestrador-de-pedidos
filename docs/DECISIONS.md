@@ -68,10 +68,24 @@ Os fakes também simulam corridas e Redis fora, cenários difíceis de reproduzi
 passam juntas pelas buscas, o índice único recusa o insert da perdedora (`DuplicateOrderError`), e o caso de uso
 **reavalia a requisição uma vez**, agora enxergando o pedido da vencedora (vira 200 duplicate ou 409).
 
-**Reparo de enqueue (consistência banco ↔ fila sem outbox):** se o insert funcionou e o enqueue falhou (Redis fora),
-a requisição devolve 500 e o pedido fica `RECEIVED` sem job. Quando o cliente faz retry com a mesma chave, o pedido
-ainda `RECEIVED` é **enfileirado de novo**; é seguro porque a fila deduplica por `jobId`. Fecha a lacuna para clientes
-que fazem retry; o outbox (fora do escopo) fecharia para todos.
+**Consistência banco ↔ fila (sem outbox):** são duas gravações em dois sistemas sem transação, então sempre existe
+uma janela em que a primeira deu certo e a segunda não. A ordem é **Mongo primeiro** (fonte da verdade), fila depois:
+se falhar, sobra um *pedido sem job* (recuperável, o job é recriado a partir do pedido), nunca um *job sem pedido*
+(o worker não teria o que processar). Enfileirar antes também abriria corrida no caminho feliz (worker pega o job
+antes do insert terminar) e enfileiraria requisições que o índice único ainda iria recusar.
+
+Defesas, da mais rápida para a mais lenta:
+1. **Retry interno curto** do enqueue dentro da requisição (`ENQUEUE_RETRY_DELAYS_MS`, padrão 100/200/400 ms):
+   cobre piscadas do Redis sem o cliente perceber.
+2. **202 mesmo assim:** esgotadas as tentativas, o pedido já está salvo, então a resposta continua 202
+   (`pendingEnqueue: true` vira log de warning). O 202 promete "recebi e vou processar", e a promessa vale por causa
+   da varredura. Uma DLQ não serviria aqui: ela também mora no Redis, que é justamente o que caiu.
+3. **Reparo no retry do cliente:** se o cliente reenviar a mesma chave, um pedido ainda `RECEIVED` é enfileirado
+   na hora (seguro: a fila deduplica por `jobId`).
+4. **Varredura de órfãos** (`EnqueueStaleOrders`): job agendado que enfileira pedidos `RECEIVED` parados há mais
+   de alguns minutos. É a "DLQ" do enqueue, guardada no Mongo, que não caiu junto com o Redis.
+
+Consequência: **Redis fora não derruba o recebimento**; a API segue aceitando pedidos e só o processamento atrasa.
 
 **Lock otimista no update:** o update grava só se a `revision` no banco ainda for a que foi lida.
 Duas atualizações simultâneas do mesmo pedido: a perdedora recebe 409 e deve tentar de novo.
@@ -137,8 +151,8 @@ Sem índice em `errors`/`error_codes` por enquanto: coleção é muito mais escr
 
 ## Resiliência com a Frankfurter
 
-- **Healthcheck** (`GET /health`, terminus): Mongo e Redis são críticos; Frankfurter é *degradável*
-  (reporta `degraded`, não derruba). No start só loga warning: a app sobe mesmo com ela fora, para não perder pedidos.
+- **Healthcheck** (`GET /health`, terminus): Mongo é crítico; Redis e Frankfurter são *degradáveis*
+  (reportam `degraded`, não derrubam): sem Redis o recebimento continua e a varredura enfileira depois. No start só loga warning: a app sobe mesmo com ela fora, para não perder pedidos.
 - **Circuit breaker** próprio (closed → open → half-open), com relógio injetado para teste.
 - **Circuito aberto:** o worker devolve o job para a fila com `worker.rateLimit()` + `RateLimitError`,
   **sem gastar tentativa**; o pedido continua `RECEIVED` e a fila volta a andar quando o circuito fecha.
@@ -150,6 +164,17 @@ Sem índice em `errors`/`error_codes` por enquanto: coleção é muito mais escr
   (`REPROCESS_RATE_PER_SECOND`), para não competir com pedidos novos nem disparar rajada na Frankfurter.
 - Novo `jobId` (`{key}:reprocess:{n}`), limite `REPROCESS_MAX_COUNT`.
 - Automático (job recorrente, só com circuito fechado): candidato a ficar documentado se o tempo apertar.
+
+## Varredura de órfãos
+
+- Caso de uso `EnqueueStaleOrders`: busca pedidos `RECEIVED` com `updatedAt` mais antigo que `STALE_ORDER_AFTER_MS`
+  (em lotes) e enfileira cada um com `jobId` = chave atual. Pedido que já tinha job: o dedup ignora; job rodando
+  duas vezes: o worker só processa se `needsEnrichment`.
+- Agendada pelo `@nestjs/schedule` (timer no processo), não por job recorrente do BullMQ: a varredura existe
+  justamente para quando o Redis falhou, então não pode depender dele para disparar.
+- Com várias instâncias da API, cada uma varre; é seguro pelo dedup, só desperdiça consultas. Em produção:
+  lock distribuído ou uma instância dedicada.
+- Usa o índice `{ status, retryable, createdAt }` (ou `{ status, updatedAt }`, a definir no adapter Mongo).
 
 ## Consulta
 
@@ -166,6 +191,7 @@ Sem índice em `errors`/`error_codes` por enquanto: coleção é muito mais escr
 - **Rate limit** (`@nestjs/throttler`) por origem e por `order_id`.
 - Alternativa de idempotência com coleção `idempotency_records` + TTL (modelo Stripe): chaves expiram e dá para
   devolver a resposta original exata; custo é manter duas coleções consistentes sem transação.
-- Outbox transacional para consistência banco ↔ fila (exige Mongo em replica set).
+- Outbox transacional para consistência banco ↔ fila (exige Mongo em replica set). A varredura de órfãos cobre
+  o mesmo buraco com atraso de alguns minutos; o outbox fecharia em segundos.
 - Change Streams para exportar rejeições em tempo real.
 - Logs de rejeição em ferramenta de observabilidade em vez do Mongo.

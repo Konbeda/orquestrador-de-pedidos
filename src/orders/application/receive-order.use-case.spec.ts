@@ -31,13 +31,24 @@ const command = (
 describe('ReceiveOrder', () => {
   let repository: InMemoryOrderRepository;
   let queue: FakeEnrichmentQueue;
+  /** Delays the use case waited for, recorded instead of really sleeping. */
+  let sleeps: number[];
 
   const useCase = (settings: Partial<ReceiveOrderSettings> = {}) =>
-    new ReceiveOrder(repository, queue, new FakeSupportedCurrencies(), {
-      duplicatePolicy: 'reject',
-      maxRevisions: 10,
-      ...settings,
-    });
+    new ReceiveOrder(
+      repository,
+      queue,
+      new FakeSupportedCurrencies(),
+      {
+        duplicatePolicy: 'reject',
+        maxRevisions: 10,
+        enqueueRetryDelaysMs: [100, 200, 400],
+        ...settings,
+      },
+      async (ms) => {
+        sleeps.push(ms);
+      },
+    );
 
   /** Stores an order received earlier and walks it to `status`. */
   async function existingOrder(
@@ -63,6 +74,7 @@ describe('ReceiveOrder', () => {
   beforeEach(() => {
     repository = new InMemoryOrderRepository();
     queue = new FakeEnrichmentQueue();
+    sleeps = [];
   });
 
   describe('a new order', () => {
@@ -70,6 +82,7 @@ describe('ReceiveOrder', () => {
       const result = await useCase().execute(command());
 
       expect(result.outcome).toBe('created');
+      expect(result.pendingEnqueue).toBe(false);
       expect(result.order.status).toBe(OrderStatus.RECEIVED);
       expect(repository.all()).toHaveLength(1);
       expect(queue.jobs).toEqual([
@@ -102,17 +115,16 @@ describe('ReceiveOrder', () => {
       expect(queue.jobs).toHaveLength(1);
     });
 
-    it('repairs a failed enqueue: the retry of a RECEIVED order enqueues it', async () => {
-      queue.failNext();
-      await expect(useCase().execute(command())).rejects.toThrow(
-        'Redis unavailable',
-      );
-      expect(repository.all()[0]!.status).toBe(OrderStatus.RECEIVED);
-      expect(queue.jobs).toHaveLength(0);
+    it('repairs a pending enqueue: the retry of a RECEIVED order enqueues it at once', async () => {
+      queue.failNext(Infinity);
+      const first = await useCase().execute(command());
+      expect(first.pendingEnqueue).toBe(true);
+      queue.recover();
 
       const retry = await useCase().execute(command());
 
       expect(retry.outcome).toBe('duplicate');
+      expect(retry.pendingEnqueue).toBe(false);
       expect(queue.jobs).toEqual([
         { jobId: 'key-1', orderId: retry.order.id, requestId: 'req_1' },
       ]);
@@ -218,6 +230,54 @@ describe('ReceiveOrder', () => {
       await expect(
         useCase({ duplicatePolicy: 'update', maxRevisions: 1 }).execute(update),
       ).rejects.toThrow(RevisionLimitReachedError);
+    });
+  });
+
+  describe('when the queue (Redis) fails after the order is stored', () => {
+    it('retries the enqueue internally with the configured delays', async () => {
+      queue.failNext(2);
+
+      const result = await useCase().execute(command());
+
+      expect(result.pendingEnqueue).toBe(false);
+      expect(queue.attempts).toBe(3);
+      expect(sleeps).toEqual([100, 200]);
+      expect(queue.jobs).toHaveLength(1);
+    });
+
+    it('still accepts the order once the retries run out: it is stored and the sweeper will enqueue it', async () => {
+      queue.failNext(Infinity);
+
+      const result = await useCase().execute(command());
+
+      expect(result.outcome).toBe('created');
+      expect(result.pendingEnqueue).toBe(true);
+      expect(result.order.status).toBe(OrderStatus.RECEIVED);
+      expect(repository.all()).toHaveLength(1);
+      expect(queue.attempts).toBe(4);
+      expect(sleeps).toEqual([100, 200, 400]);
+    });
+
+    it('also accepts an update whose new job could not be enqueued', async () => {
+      await existingOrder(OrderStatus.ENRICHED);
+      queue.failNext(Infinity);
+
+      const result = await useCase({ duplicatePolicy: 'update' }).execute(
+        command({ idempotencyKey: 'key-2' }),
+      );
+
+      expect(result.outcome).toBe('updated');
+      expect(result.pendingEnqueue).toBe(true);
+      expect(repository.all()[0]!.status).toBe(OrderStatus.RECEIVED);
+    });
+
+    it('does not retry when no enqueue was needed', async () => {
+      queue.failNext(Infinity);
+
+      const result = await useCase().execute(command({ currency: 'ARS' }));
+
+      expect(result.pendingEnqueue).toBe(false);
+      expect(queue.attempts).toBe(0);
     });
   });
 

@@ -37,6 +37,19 @@ export const envSchema = z.object({
   ENRICHMENT_MAX_ATTEMPTS: positiveInt.default(5),
   ENRICHMENT_BACKOFF_MS: positiveInt.default(1000),
   ENRICHMENT_CONCURRENCY: positiveInt.default(5),
+  /** Comma-separated waits between enqueue attempts inside the webhook request. */
+  ENQUEUE_RETRY_DELAYS_MS: z
+    .string()
+    .default('100,200,400')
+    .transform((list) =>
+      list
+        .split(',')
+        .map((delay) => delay.trim())
+        .filter((delay) => delay.length > 0)
+        .map(Number),
+    )
+    // 'abc' becomes NaN, which z.number() refuses.
+    .pipe(z.array(z.number().int().nonnegative())),
 
   CIRCUIT_FAILURE_THRESHOLD: positiveInt.default(5),
   CIRCUIT_RESET_TIMEOUT_MS: positiveInt.default(30_000),

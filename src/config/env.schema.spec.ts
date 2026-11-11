@@ -67,6 +67,29 @@ describe('validateEnv', () => {
     ).toThrow(/ENRICHMENT_TARGET_CURRENCY/);
   });
 
+  it('parses the in-request enqueue retry delays, defaulting to 100, 200, 400 ms', () => {
+    expect(validateEnv(minimalEnv).ENQUEUE_RETRY_DELAYS_MS).toEqual([
+      100, 200, 400,
+    ]);
+    expect(
+      validateEnv({ ...minimalEnv, ENQUEUE_RETRY_DELAYS_MS: '50, 50' })
+        .ENQUEUE_RETRY_DELAYS_MS,
+    ).toEqual([50, 50]);
+  });
+
+  it('accepts an empty retry list, meaning a single enqueue attempt', () => {
+    expect(
+      validateEnv({ ...minimalEnv, ENQUEUE_RETRY_DELAYS_MS: '' })
+        .ENQUEUE_RETRY_DELAYS_MS,
+    ).toEqual([]);
+  });
+
+  it('refuses a non numeric retry delay', () => {
+    expect(() =>
+      validateEnv({ ...minimalEnv, ENQUEUE_RETRY_DELAYS_MS: '100,abc' }),
+    ).toThrow(/ENQUEUE_RETRY_DELAYS_MS/);
+  });
+
   it('refuses zero attempts, since a job must run at least once', () => {
     expect(() =>
       validateEnv({ ...minimalEnv, ENRICHMENT_MAX_ATTEMPTS: '0' }),

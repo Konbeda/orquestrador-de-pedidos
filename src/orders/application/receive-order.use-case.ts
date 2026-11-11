@@ -13,13 +13,34 @@ export interface ReceiveOrderSettings {
   /** What to do when an order_id arrives again under a new idempotency key. */
   duplicatePolicy: 'reject' | 'update';
   maxRevisions: number;
+  /**
+   * Waits between enqueue attempts inside the request (e.g. [100, 200, 400] = 4 attempts).
+   * Short on purpose: the HTTP client is waiting. Longer outages are left to the sweeper.
+   */
+  enqueueRetryDelaysMs: number[];
 }
 
 /** created → 202, duplicate → 200, updated → 202 */
 export interface ReceiveOrderResult {
   outcome: 'created' | 'duplicate' | 'updated';
   order: Order;
+  /**
+   * The order is stored and needs a job, but the queue was unreachable after every retry.
+   * Still a success for the client: the order is durable and the sweeper enqueues it.
+   */
+  pendingEnqueue: boolean;
+  /** Why the enqueue failed, for logs and metrics. */
+  enqueueError?: unknown;
 }
+
+type EnqueueOutcome = Pick<
+  ReceiveOrderResult,
+  'pendingEnqueue' | 'enqueueError'
+>;
+const NOTHING_PENDING: EnqueueOutcome = { pendingEnqueue: false };
+
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** Same order_id, different idempotency key, policy=reject. */
 export class OrderAlreadyExistsError extends Error {
@@ -50,6 +71,7 @@ export class ReceiveOrder {
     private readonly queue: EnrichmentQueue,
     private readonly currencies: SupportedCurrencies,
     private readonly settings: ReceiveOrderSettings,
+    private readonly wait: (ms: number) => Promise<void> = sleep,
   ) {}
 
   execute(command: ReceiveOrderCommand): Promise<ReceiveOrderResult> {
@@ -86,8 +108,10 @@ export class ReceiveOrder {
     const supported = await this.rejectIfUnsupportedCurrency(received);
 
     const order = await this.orders.insert(received);
-    if (supported) await this.enqueue(order, command.requestId);
-    return { outcome: 'created', order };
+    const enqueued = supported
+      ? await this.enqueue(order, command.requestId)
+      : NOTHING_PENDING;
+    return { outcome: 'created', order, ...enqueued };
   }
 
   private async duplicate(
@@ -99,10 +123,11 @@ export class ReceiveOrder {
     }
     // Still RECEIVED means no worker picked it up: maybe the first enqueue failed
     // after the insert. Enqueuing again is safe, the queue dedups by jobId.
-    if (order.status === OrderStatus.RECEIVED) {
-      await this.enqueue(order, command.requestId);
-    }
-    return { outcome: 'duplicate', order };
+    const enqueued =
+      order.status === OrderStatus.RECEIVED
+        ? await this.enqueue(order, command.requestId)
+        : NOTHING_PENDING;
+    return { outcome: 'duplicate', order, ...enqueued };
   }
 
   private async update(
@@ -120,9 +145,11 @@ export class ReceiveOrder {
     const supported = await this.rejectIfUnsupportedCurrency(order);
 
     await this.orders.update(order, expectedRevision);
-    if (supported && requiresEnqueue)
-      await this.enqueue(order, command.requestId);
-    return { outcome: 'updated', order };
+    const enqueued =
+      supported && requiresEnqueue
+        ? await this.enqueue(order, command.requestId)
+        : NOTHING_PENDING;
+    return { outcome: 'updated', order, ...enqueued };
   }
 
   /** Unsupported currencies fail at intake: no job, no worker time, no provider call. */
@@ -136,11 +163,30 @@ export class ReceiveOrder {
     return supported;
   }
 
-  private enqueue(order: Order, requestId: string): Promise<void> {
-    return this.queue.enqueue({
+  /**
+   * Runs after the order is stored, so a queue failure must not fail the request:
+   * retries a few times, then reports the enqueue as pending (sweeper takes over).
+   */
+  private async enqueue(
+    order: Order,
+    requestId: string,
+  ): Promise<EnqueueOutcome> {
+    const job = {
       jobId: order.currentIdempotencyKey,
       orderId: order.id!,
       requestId,
-    });
+    };
+    const delays = this.settings.enqueueRetryDelaysMs;
+
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await this.queue.enqueue(job);
+        return NOTHING_PENDING;
+      } catch (error) {
+        if (attempt >= delays.length)
+          return { pendingEnqueue: true, enqueueError: error };
+        await this.wait(delays[attempt]!);
+      }
+    }
   }
 }
