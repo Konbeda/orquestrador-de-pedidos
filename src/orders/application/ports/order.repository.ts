@@ -30,4 +30,17 @@ export abstract class OrderRepository {
   abstract insert(order: Order): Promise<Order>;
   /** Saves only if the stored revision still equals `expectedRevision`, else ConcurrentUpdateError. */
   abstract update(order: Order, expectedRevision: number): Promise<void>;
+
+  /*
+   * Orphan sweeper support. Every stored order carries a persistence-level
+   * `queueCheckedAt` timestamp: set on insert and update, refreshed by the sweeper
+   * after it enqueues. Staleness is measured from it, not from creation, so an
+   * order already waiting in a long queue is not picked again on every run.
+   */
+
+  /** RECEIVED orders whose `queueCheckedAt` is older than `cutoff`, oldest first. */
+  abstract findStaleReceived(cutoff: Date, limit: number): Promise<Order[]>;
+
+  /** Refreshes `queueCheckedAt` of the given orders that are still RECEIVED. */
+  abstract markQueueChecked(ids: string[], at: Date): Promise<void>;
 }

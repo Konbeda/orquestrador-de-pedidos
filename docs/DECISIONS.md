@@ -167,14 +167,24 @@ Sem índice em `errors`/`error_codes` por enquanto: coleção é muito mais escr
 
 ## Varredura de órfãos
 
-- Caso de uso `EnqueueStaleOrders`: busca pedidos `RECEIVED` com `updatedAt` mais antigo que `STALE_ORDER_AFTER_MS`
-  (em lotes) e enfileira cada um com `jobId` = chave atual. Pedido que já tinha job: o dedup ignora; job rodando
-  duas vezes: o worker só processa se `needsEnrichment`.
+- Caso de uso `EnqueueStaleOrders`: busca pedidos `RECEIVED` com `queue_checked_at` mais antigo que
+  `STALE_ORDER_AFTER_MS`, em lotes de `SWEEP_BATCH_SIZE` (todos os lotes na mesma execução), e enfileira cada um
+  com `jobId` = chave atual. Pedido que já tinha job: o dedup ignora; job rodando duas vezes: o worker só processa
+  se `needsEnrichment`.
+- **`queue_checked_at`** (metadado de persistência, fora do domínio): gravado no insert e no update, renovado pela
+  varredura depois de enfileirar. A idade é medida por ele, e não pela criação, porque um pedido com job esperando
+  numa fila longa continua `RECEIVED`: sem o carimbo, a varredura pegaria sempre os mesmos pedidos mais antigos
+  e nunca chegaria nos outros. Se o pedido continuar `RECEIVED` por mais um período inteiro, é pego de novo.
+- **Para na primeira falha de enqueue:** Redis provavelmente fora; insistir só gera erro em cascata. Os carimbados
+  até ali ficam, o resto vai na próxima execução.
+- **Proteção contra loop:** se um lote vier só com pedidos já vistos na execução, para (defesa contra carimbo
+  que não foi renovado). No teste, o fake conta consultas e falha, porque um loop sobre promises que resolvem na
+  hora roda só em microtasks e trava o próprio timeout do Vitest.
 - Agendada pelo `@nestjs/schedule` (timer no processo), não por job recorrente do BullMQ: a varredura existe
   justamente para quando o Redis falhou, então não pode depender dele para disparar.
 - Com várias instâncias da API, cada uma varre; é seguro pelo dedup, só desperdiça consultas. Em produção:
   lock distribuído ou uma instância dedicada.
-- Usa o índice `{ status, retryable, createdAt }` (ou `{ status, updatedAt }`, a definir no adapter Mongo).
+- Índice próprio `{ status, queue_checked_at }` (a definir junto com os demais no adapter Mongo).
 
 ## Consulta
 

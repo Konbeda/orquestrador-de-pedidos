@@ -19,6 +19,9 @@ describe('validateEnv', () => {
       REJECTION_RETENTION_DAYS: 90,
       REPROCESS_MAX_COUNT: 3,
       MAX_ORDER_REVISIONS: 10,
+      SWEEP_INTERVAL_MS: 60_000,
+      STALE_ORDER_AFTER_MS: 120_000,
+      SWEEP_BATCH_SIZE: 100,
     });
   });
 

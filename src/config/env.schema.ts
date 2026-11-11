@@ -57,6 +57,11 @@ export const envSchema = z.object({
   REPROCESS_MAX_COUNT: positiveInt.default(3),
   REPROCESS_RATE_PER_SECOND: positiveInt.default(5),
 
+  // Orphan sweeper: RECEIVED orders unchecked for STALE_ORDER_AFTER_MS get enqueued again.
+  SWEEP_INTERVAL_MS: positiveInt.default(60_000),
+  STALE_ORDER_AFTER_MS: positiveInt.default(120_000),
+  SWEEP_BATCH_SIZE: positiveInt.default(100),
+
   ORDER_DUPLICATE_POLICY: z.enum(['reject', 'update']).default('reject'),
   MAX_ORDER_REVISIONS: positiveInt.default(10),
   REJECTION_RETENTION_DAYS: positiveInt.default(90),

@@ -1,30 +1,38 @@
 import { Order, type OrderSnapshot } from '../../src/orders/domain/order.js';
+import { OrderStatus } from '../../src/orders/domain/order-status.js';
 import {
   ConcurrentUpdateError,
   DuplicateOrderError,
   OrderRepository,
 } from '../../src/orders/application/ports/order.repository.js';
 
+interface Row {
+  snapshot: OrderSnapshot;
+  queueCheckedAt: Date;
+}
+
 /**
  * Behaves like the Mongo repository: unique keys across orders, unique order ids,
- * optimistic lock on revision. Stores snapshots so callers never share mutable state.
+ * optimistic lock on revision, queueCheckedAt stamped on every write.
+ * Stores snapshots so callers never share mutable state.
  */
 export class InMemoryOrderRepository extends OrderRepository {
-  private readonly rows = new Map<string, OrderSnapshot>();
+  private readonly rows = new Map<string, Row>();
   private nextId = 1;
   private pendingConcurrentInsert: Order | null = null;
   private pendingConcurrentUpdate = false;
 
+  /** `now` is the clock used to stamp writes; tests move it to age orders. */
+  constructor(private readonly now: () => Date = () => new Date()) {
+    super();
+  }
+
   async findByIdempotencyKey(key: string): Promise<Order | null> {
-    const row = [...this.rows.values()].find((r) =>
-      r.idempotencyKeys.includes(key),
-    );
-    return row ? Order.fromSnapshot(row) : null;
+    return this.findOne((s) => s.idempotencyKeys.includes(key));
   }
 
   async findByOrderId(orderId: string): Promise<Order | null> {
-    const row = [...this.rows.values()].find((r) => r.orderId === orderId);
-    return row ? Order.fromSnapshot(row) : null;
+    return this.findOne((s) => s.orderId === orderId);
   }
 
   async insert(order: Order): Promise<Order> {
@@ -34,30 +42,59 @@ export class InMemoryOrderRepository extends OrderRepository {
       await this.insert(winner);
     }
     const snapshot = order.toSnapshot();
-    const rows = [...this.rows.values()];
+    const stored = this.snapshots();
     if (
-      rows.some((r) =>
-        r.idempotencyKeys.some((k) => snapshot.idempotencyKeys.includes(k)),
+      stored.some((s) =>
+        s.idempotencyKeys.some((k) => snapshot.idempotencyKeys.includes(k)),
       )
     ) {
       throw new DuplicateOrderError('idempotencyKey');
     }
-    if (rows.some((r) => r.orderId === snapshot.orderId)) {
+    if (stored.some((s) => s.orderId === snapshot.orderId)) {
       throw new DuplicateOrderError('orderId');
     }
     const id = `order_${this.nextId++}`;
-    this.rows.set(id, { ...snapshot, id });
+    this.rows.set(id, {
+      snapshot: { ...snapshot, id },
+      queueCheckedAt: this.now(),
+    });
     return Order.fromSnapshot({ ...snapshot, id });
   }
 
   async update(order: Order, expectedRevision: number): Promise<void> {
-    const stored = order.id ? this.rows.get(order.id) : undefined;
-    if (!stored) throw new Error(`Order ${order.id} does not exist`);
-    if (this.pendingConcurrentUpdate || stored.revision !== expectedRevision) {
+    const row = order.id ? this.rows.get(order.id) : undefined;
+    if (!row) throw new Error(`Order ${order.id} does not exist`);
+    if (
+      this.pendingConcurrentUpdate ||
+      row.snapshot.revision !== expectedRevision
+    ) {
       this.pendingConcurrentUpdate = false;
       throw new ConcurrentUpdateError(order.orderId);
     }
-    this.rows.set(stored.id!, { ...order.toSnapshot(), id: stored.id });
+    this.rows.set(order.id!, {
+      snapshot: { ...order.toSnapshot(), id: order.id },
+      queueCheckedAt: this.now(),
+    });
+  }
+
+  async findStaleReceived(cutoff: Date, limit: number): Promise<Order[]> {
+    return [...this.rows.values()]
+      .filter(
+        (row) =>
+          row.snapshot.status === OrderStatus.RECEIVED &&
+          row.queueCheckedAt.getTime() < cutoff.getTime(),
+      )
+      .sort((a, b) => a.queueCheckedAt.getTime() - b.queueCheckedAt.getTime())
+      .slice(0, limit)
+      .map((row) => Order.fromSnapshot(row.snapshot));
+  }
+
+  async markQueueChecked(ids: string[], at: Date): Promise<void> {
+    for (const id of ids) {
+      const row = this.rows.get(id);
+      if (row?.snapshot.status === OrderStatus.RECEIVED)
+        row.queueCheckedAt = at;
+    }
   }
 
   // ---- test controls -------------------------------------------------------
@@ -80,7 +117,28 @@ export class InMemoryOrderRepository extends OrderRepository {
     this.pendingConcurrentUpdate = true;
   }
 
+  /** Changes a stored order behind the use case's back (e.g. a worker picking it up). */
+  async mutate(id: string, change: (order: Order) => void): Promise<void> {
+    const row = this.rows.get(id)!;
+    const order = Order.fromSnapshot(row.snapshot);
+    change(order);
+    row.snapshot = order.toSnapshot();
+  }
+
+  queueCheckedAt(id: string): Date | undefined {
+    return this.rows.get(id)?.queueCheckedAt;
+  }
+
   all(): Order[] {
-    return [...this.rows.values()].map((row) => Order.fromSnapshot(row));
+    return this.snapshots().map((s) => Order.fromSnapshot(s));
+  }
+
+  private snapshots(): OrderSnapshot[] {
+    return [...this.rows.values()].map((row) => row.snapshot);
+  }
+
+  private findOne(match: (s: OrderSnapshot) => boolean): Order | null {
+    const snapshot = this.snapshots().find(match);
+    return snapshot ? Order.fromSnapshot(snapshot) : null;
   }
 }
