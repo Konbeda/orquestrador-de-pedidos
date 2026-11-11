@@ -22,6 +22,7 @@ export class InMemoryOrderRepository extends OrderRepository {
   private nextId = 1;
   private pendingConcurrentInsert: Order | null = null;
   private pendingConcurrentUpdate = false;
+  private insertAfterNextKeyLookup: Order | null = null;
   /** One entry per upcoming update call: an Error fails that call, null lets it through. */
   private plannedUpdateFailures: Array<Error | null> = [];
 
@@ -36,7 +37,13 @@ export class InMemoryOrderRepository extends OrderRepository {
   }
 
   async findByIdempotencyKey(key: string): Promise<Order | null> {
-    return this.findOne((s) => s.idempotencyKeys.includes(key));
+    const found = this.findOne((s) => s.idempotencyKeys.includes(key));
+    if (this.insertAfterNextKeyLookup) {
+      const winner = this.insertAfterNextKeyLookup;
+      this.insertAfterNextKeyLookup = null;
+      await this.insert(winner);
+    }
+    return found;
   }
 
   async findByOrderId(orderId: string): Promise<Order | null> {
@@ -153,6 +160,14 @@ export class InMemoryOrderRepository extends OrderRepository {
    */
   planUpdateFailures(plan: Array<Error | null>): void {
     this.plannedUpdateFailures = [...plan];
+  }
+
+  /**
+   * Race simulation: `winner` is stored right after the next lookup by key answers,
+   * so the following lookup by order_id already sees it.
+   */
+  simulateInsertBetweenLookups(winner: Order): void {
+    this.insertAfterNextKeyLookup = winner;
   }
 
   /** Race simulation: the next update finds a newer revision stored. */

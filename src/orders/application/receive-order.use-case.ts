@@ -88,6 +88,11 @@ export class ReceiveOrder {
     if (sameKey) return this.duplicate(sameKey, command);
 
     const sameOrderId = await this.orders.findByOrderId(command.orderId);
+    // An identical request may have stored the order between our two lookups:
+    // if it already holds our key, this is a duplicate, not a conflict nor an update.
+    if (sameOrderId?.idempotencyKeys.includes(command.idempotencyKey)) {
+      return this.duplicate(sameOrderId, command);
+    }
     if (sameOrderId) return this.update(sameOrderId, command);
 
     try {

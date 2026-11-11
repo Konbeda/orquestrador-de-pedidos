@@ -68,6 +68,12 @@ Os fakes também simulam corridas e Redis fora, cenários difíceis de reproduzi
 passam juntas pelas buscas, o índice único recusa o insert da perdedora (`DuplicateOrderError`), e o caso de uso
 **reavalia a requisição uma vez**, agora enxergando o pedido da vencedora (vira 200 duplicate ou 409).
 
+**Corrida entre as duas buscas** (encontrada pelo e2e de 10 requisições simultâneas): a busca por chave não acha
+nada, a requisição gêmea grava, e a busca por `order_id` já encontra o pedido. Sem cuidado, isso virava 409
+`ORDER_ALREADY_EXISTS` (ou, com `update`, uma revisão 2 com a mesma chave). Regra: se o pedido achado por
+`order_id` **já contém a chave da requisição**, é duplicado (200). A janela sempre existiu; apareceu quando um índice
+novo deixou o insert mais lento. O fake simula exatamente esse momento (`simulateInsertBetweenLookups`).
+
 **Consistência banco ↔ fila (sem outbox):** são duas gravações em dois sistemas sem transação, então sempre existe
 uma janela em que a primeira deu certo e a segunda não. A ordem é **Mongo primeiro** (fonte da verdade), fila depois:
 se falhar, sobra um *pedido sem job* (recuperável, o job é recriado a partir do pedido), nunca um *job sem pedido*

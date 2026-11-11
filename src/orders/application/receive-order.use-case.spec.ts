@@ -327,6 +327,27 @@ describe('ReceiveOrder', () => {
       expect(repository.all()).toHaveLength(1);
     });
 
+    it('an identical request stored between our two lookups is a duplicate, not a conflict', async () => {
+      // Our lookup by key misses; the twin request inserts; our lookup by order_id finds it.
+      repository.simulateInsertBetweenLookups(Order.receive(command()));
+
+      const result = await useCase().execute(command());
+
+      expect(result.outcome).toBe('duplicate');
+      expect(repository.all()).toHaveLength(1);
+    });
+
+    it('the same between-lookups race under policy=update is still a duplicate, not an update', async () => {
+      repository.simulateInsertBetweenLookups(Order.receive(command()));
+
+      const result = await useCase({ duplicatePolicy: 'update' }).execute(
+        command(),
+      );
+
+      expect(result.outcome).toBe('duplicate');
+      expect(result.order.revision).toBe(1);
+    });
+
     it('same order_id with another key at once, policy=reject: the loser is refused', async () => {
       repository.simulateConcurrentInsert(
         Order.receive(command({ idempotencyKey: 'key-0' })),
