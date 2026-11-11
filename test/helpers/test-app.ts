@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
 import { inject } from 'vitest';
 import { AppModule } from '../../src/app.module.js';
+import { configureApp } from '../../src/app.setup.js';
 
 /**
  * Boots the real AppModule against the test containers.
@@ -29,7 +30,12 @@ export async function createTestApp(
   const moduleRef = await Test.createTestingModule({
     imports: [AppModule.register()],
   }).compile();
-  const app = moduleRef.createNestApplication();
+  // Same setup as main.ts: body limit, validation, error format.
+  const app = moduleRef.createNestApplication({
+    bodyParser: false,
+    bufferLogs: true,
+  });
+  configureApp(app);
   await app.init();
   return app;
 }

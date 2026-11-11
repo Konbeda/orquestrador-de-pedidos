@@ -284,6 +284,46 @@ nativo durante o atraso do nock dispara um `assert` interno do undici (erro solt
   lock distribuído ou uma instância dedicada.
 - Índice próprio `{ status, queue_checked_at }` (a definir junto com os demais no adapter Mongo).
 
+## API HTTP
+
+**Respostas de sucesso:** resumo do pedido em snake_case (`id`, `order_id`, `status`, `currency`, `total`,
+`revision`, `enrichment`, `failure`). **Nunca** devolve dados do cliente (e-mail, nome) nem o array de chaves.
+`POST /webhooks/orders`: **202** criado ou atualizado (o enriquecimento é assíncrono), **200** duplicado.
+
+**Erros, todos no mesmo formato** `{ statusCode, code, message, request_id, errors? }`. O `code` é estável: o
+cliente trata por ele, não pela mensagem. Tabela única em `shared/http/http-error.ts`:
+
+| Situação | Status | `code` |
+|---|---|---|
+| Payload fora do contrato (lista **todos** os campos, um erro por campo) | 400 | `INVALID_PAYLOAD` |
+| Corpo que não é JSON | 400 | `MALFORMED_JSON` |
+| Corpo acima de `BODY_LIMIT` | 413 | `PAYLOAD_TOO_LARGE` |
+| Mesmo `order_id`, outra chave (`reject`) | 409 | `ORDER_ALREADY_EXISTS` |
+| Update com pedido em `ENRICHING` / acima do teto / concorrente | 409 | `ORDER_BEING_PROCESSED` / `REVISION_LIMIT_REACHED` / `CONCURRENT_UPDATE` |
+| Mesma chave para outro `order_id` | 422 | `IDEMPOTENCY_KEY_REUSED` |
+| Qualquer erro nosso inesperado | 500 | `INTERNAL_ERROR` (detalhe só no log) |
+
+- **Campos desconhecidos são ignorados**, não recusados: provedores adicionam campos com o tempo.
+- **Limites no DTO** (tamanho de textos, até 500 itens, chave até 255) para uma requisição não ser abusiva.
+- **`request_id`:** o `x-request-id` do cliente (até 128 caracteres) ou um gerado; volta no header da resposta, em
+  todo log e em todo corpo de erro. Erros do body-parser acontecem antes do logger, por isso o filtro também atribui.
+- **Erros do body-parser no Nest 12:** JSON inválido chega como `BadRequestException` com o erro original em `cause`;
+  corpo grande chega como `HttpException(413)`. O mapeamento olha o erro e o `cause`.
+- **`configureApp()`** concentra body limit, validação e filtro de erro; `main.ts` e os testes e2e usam a mesma
+  função, então os testes exercitam a configuração de produção.
+
+## Composição no Nest (`OrdersModule`)
+
+- Os **ports (classes abstratas) são os tokens de injeção**; os adapters são criados por factories a partir da
+  config validada. Os casos de uso não têm decorators do Nest.
+- O repositório só fica pronto depois de `model.init()` (índices únicos), e o Nest espera factories assíncronas
+  antes de abrir a porta.
+- `SupportedCurrencies` aquece no boot (`warmUp`); com a Frankfurter fora, a app sobe com o fallback e loga warning.
+  Se ela cair depois de já ter respondido, **a última lista boa vale mais que o fallback**; após uma falha, espera
+  60 s antes de perguntar de novo (não chama a cada requisição).
+- A fila usa a conexão própria do adapter (falha rápida); o `BullModule` do `@nestjs/bullmq` saiu do `AppModule`.
+  O módulo fecha a fila no shutdown, porque objetos criados por factory não recebem lifecycle hooks próprios.
+
 ## Consulta
 
 - `GET /orders?status=&order_id=`, `GET /orders/:id` (id interno), `GET /queue/metrics` (principal, reprocesso e DLQ).

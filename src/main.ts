@@ -1,28 +1,16 @@
 import { NestFactory } from '@nestjs/core';
-import type { NestExpressApplication } from '@nestjs/platform-express';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module.js';
+import { configureApp } from './app.setup.js';
 import type { Env } from './config/env.schema.js';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(
-    AppModule.register(),
-    {
-      bufferLogs: true,
-      bodyParser: false,
-    },
-  );
-  app.useLogger(app.get(Logger));
-
-  const config = app.get<ConfigService<Env, true>>(ConfigService);
-  app.useBodyParser('json', {
-    limit: config.get('BODY_LIMIT', { infer: true }),
+  const app = await NestFactory.create(AppModule.register(), {
+    bufferLogs: true,
+    bodyParser: false, // configureApp registers it with BODY_LIMIT
   });
-
-  // Lets in-flight jobs and requests finish on SIGTERM (docker stop, k8s rollout).
-  app.enableShutdownHooks();
+  configureApp(app);
 
   const openApi = new DocumentBuilder()
     .setTitle('Orders Orchestrator')
@@ -35,6 +23,7 @@ async function bootstrap() {
     SwaggerModule.createDocument(app, openApi),
   );
 
+  const config = app.get<ConfigService<Env, true>>(ConfigService);
   await app.listen(config.get('PORT', { infer: true }));
 }
 await bootstrap();

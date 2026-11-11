@@ -1,0 +1,123 @@
+import { Logger, Module, type OnApplicationShutdown } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { MongooseModule, getModelToken } from '@nestjs/mongoose';
+import type { Model } from 'mongoose';
+import type { Env } from '../config/env.schema.js';
+import { EnrichmentQueue } from './application/ports/enrichment.queue.js';
+import { OrderRepository } from './application/ports/order.repository.js';
+import { SupportedCurrencies } from './application/ports/supported-currencies.js';
+import { ReceiveOrder } from './application/receive-order.use-case.js';
+import { CachedSupportedCurrencies } from './infra/exchange/cached-supported-currencies.js';
+import { FrankfurterClient } from './infra/exchange/frankfurter.client.js';
+import { MongoOrderRepository } from './infra/persistence/mongo-order.repository.js';
+import {
+  ORDER_MODEL,
+  OrderSchema,
+  type OrderDocument,
+} from './infra/persistence/order.schema.js';
+import { BullMqEnrichmentQueue } from './infra/queue/bullmq-enrichment.queue.js';
+import { WebhooksController } from './http/webhooks.controller.js';
+
+type Config = ConfigService<Env, true>;
+const logger = new Logger('OrdersModule');
+
+/*
+ * Composition root of the orders feature: ports (abstract classes) are the
+ * injection tokens, adapters are built by factories from the validated config.
+ * Use cases stay free of Nest decorators.
+ */
+@Module({
+  imports: [
+    MongooseModule.forFeature([{ name: ORDER_MODEL, schema: OrderSchema }]),
+  ],
+  controllers: [WebhooksController],
+  providers: [
+    {
+      provide: OrderRepository,
+      inject: [getModelToken(ORDER_MODEL)],
+      useFactory: async (model: Model<OrderDocument>) => {
+        // Unique indexes must exist before the first write, or two identical
+        // requests could both be stored. Nest awaits this before serving traffic.
+        await model.init();
+        return new MongoOrderRepository(model);
+      },
+    },
+    {
+      provide: BullMqEnrichmentQueue,
+      inject: [ConfigService],
+      useFactory: (config: Config) =>
+        new BullMqEnrichmentQueue({
+          host: config.get('REDIS_HOST', { infer: true }),
+          port: config.get('REDIS_PORT', { infer: true }),
+          commandTimeoutMs: config.get('REDIS_COMMAND_TIMEOUT_MS', {
+            infer: true,
+          }),
+          attempts: config.get('ENRICHMENT_MAX_ATTEMPTS', { infer: true }),
+          backoffMs: config.get('ENRICHMENT_BACKOFF_MS', { infer: true }),
+        }),
+    },
+    { provide: EnrichmentQueue, useExisting: BullMqEnrichmentQueue },
+    {
+      provide: FrankfurterClient,
+      inject: [ConfigService],
+      useFactory: (config: Config) =>
+        new FrankfurterClient({
+          baseUrl: config.get('FRANKFURTER_BASE_URL', { infer: true }),
+          timeoutMs: config.get('FRANKFURTER_TIMEOUT_MS', { infer: true }),
+        }),
+    },
+    {
+      provide: SupportedCurrencies,
+      inject: [FrankfurterClient, ConfigService],
+      useFactory: async (frankfurter: FrankfurterClient, config: Config) => {
+        const currencies = new CachedSupportedCurrencies(frankfurter, {
+          ttlMs: config.get('SUPPORTED_CURRENCIES_TTL_MS', { infer: true }),
+          retryAfterFailureMs: 60_000,
+          fallback: config.get('SUPPORTED_CURRENCIES_FALLBACK', {
+            infer: true,
+          }),
+        });
+        // Boot never fails on Frankfurter: degraded, not down.
+        const source = await currencies.warmUp();
+        if (source === 'fallback') {
+          logger.warn(
+            'Frankfurter unreachable at boot: using SUPPORTED_CURRENCIES_FALLBACK',
+          );
+        }
+        return currencies;
+      },
+    },
+    {
+      provide: ReceiveOrder,
+      inject: [
+        OrderRepository,
+        EnrichmentQueue,
+        SupportedCurrencies,
+        ConfigService,
+      ],
+      useFactory: (
+        orders: OrderRepository,
+        queue: EnrichmentQueue,
+        currencies: SupportedCurrencies,
+        config: Config,
+      ) =>
+        new ReceiveOrder(orders, queue, currencies, {
+          duplicatePolicy: config.get('ORDER_DUPLICATE_POLICY', {
+            infer: true,
+          }),
+          maxRevisions: config.get('MAX_ORDER_REVISIONS', { infer: true }),
+          enqueueRetryDelaysMs: config.get('ENQUEUE_RETRY_DELAYS_MS', {
+            infer: true,
+          }),
+        }),
+    },
+  ],
+})
+export class OrdersModule implements OnApplicationShutdown {
+  constructor(private readonly queue: BullMqEnrichmentQueue) {}
+
+  /** Factory-built adapters get no lifecycle hooks of their own: close them here. */
+  async onApplicationShutdown(): Promise<void> {
+    await this.queue.close();
+  }
+}

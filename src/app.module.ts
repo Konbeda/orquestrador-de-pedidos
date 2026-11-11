@@ -1,13 +1,11 @@
-import { randomUUID } from 'node:crypto';
-import type { IncomingMessage } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Module, type DynamicModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
-import { BullModule } from '@nestjs/bullmq';
 import { LoggerModule } from 'nestjs-pino';
 import { validateEnv, type Env } from './config/env.schema.js';
-
-export const REQUEST_ID_HEADER = 'x-request-id';
+import { OrdersModule } from './orders/orders.module.js';
+import { assignRequestId } from './shared/http/request-id.js';
 
 /**
  * Built on demand (not at import time) so the configuration is read when the
@@ -32,13 +30,9 @@ export class AppModule {
           useFactory: (config: ConfigService<Env, true>) => ({
             pinoHttp: {
               level: config.get('LOG_LEVEL', { infer: true }),
-              // Reuse the caller's id when it sends one, so both sides can correlate.
-              genReqId: (req: IncomingMessage) => {
-                const incoming = req.headers[REQUEST_ID_HEADER];
-                return typeof incoming === 'string' && incoming.length > 0
-                  ? incoming
-                  : `req_${randomUUID()}`;
-              },
+              // Caller's x-request-id or a generated one; also echoed in the response header.
+              genReqId: (req: IncomingMessage, res: ServerResponse) =>
+                assignRequestId(req, res),
               customProps: (req: IncomingMessage) => ({ request_id: req.id }),
               // Personal data never reaches the logs (LGPD: data minimization).
               redact: {
@@ -67,15 +61,7 @@ export class AppModule {
           }),
         }),
 
-        BullModule.forRootAsync({
-          inject: [ConfigService],
-          useFactory: (config: ConfigService<Env, true>) => ({
-            connection: {
-              host: config.get('REDIS_HOST', { infer: true }),
-              port: config.get('REDIS_PORT', { infer: true }),
-            },
-          }),
-        }),
+        OrdersModule,
       ],
     };
   }

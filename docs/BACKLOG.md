@@ -21,11 +21,13 @@ Cada item começa com o teste vermelho. Decisões e motivos em [DECISIONS.md](DE
 - [x] `CircuitBreakingExchangeRateProvider` (decorator)
 - [x] `MongoOrderRepository` + teste de contrato (fake e Mongo real): unique multikey, E11000, lock otimista,
       10 inserts simultâneos = 1 pedido, varredura
+- [x] `SupportedCurrencies` com cache, fallback e "última lista boa vale mais que o fallback"
+- [x] `OrdersModule` (ports como tokens, `model.init()` antes do tráfego) e `configureApp` compartilhado
+- [x] `POST /webhooks/orders`: DTO, 202/200/409/422/400/413, formato único de erro, `x-request-id`
 
 ## Casos de uso (unit, com fakes)
 
 - [ ] Varredura de `ENRICHING` parados (fecha a lacuna de quando nem a falha consegue ser gravada)
-- [ ] `SupportedCurrencies`: carrega da Frankfurter, fallback quando fora, TTL do cache
 - [ ] `ReprocessOrders`: só `retryable`, respeita o limite, fila de reprocesso separada, `jobId` novo
 - [ ] `maskPII()` e montagem do registro de rejeição (`error_codes`, `payload_hash`)
 
@@ -37,9 +39,8 @@ Cada item começa com o teste vermelho. Decisões e motivos em [DECISIONS.md](DE
 
 ## HTTP e worker
 
-- [ ] Módulo do Nest: ligar adapters aos ports, aguardar `model.init()` (índices) antes de aceitar tráfego
-- [ ] `POST /webhooks/orders`: DTO (class-validator, ISO 4217), 400 com `request_id` + auditoria, 413,
-      mapeamento de erros (409 / 422), `x-request-id` na resposta, warning quando `pendingEnqueue`
+- [ ] Auditoria dos 400 em `webhook_rejections` (mascarado, `payload_hash`, `error_codes`, TTL)
+- [ ] Swagger: `@ApiProperty` nos DTOs e respostas documentadas
 - [ ] `GET /orders`, `GET /orders/:id` (sem expor o array de chaves), `GET /queue/metrics`
 - [ ] `POST /orders/reprocess`, `GET /webhooks/rejections`
 - [ ] `GET /health` (Mongo crítico; Redis e Frankfurter degradáveis), check de `/currencies` no boot
@@ -50,7 +51,6 @@ Cada item começa com o teste vermelho. Decisões e motivos em [DECISIONS.md](DE
 
 - [ ] POST → 202 → worker → `ENRICHED`
 - [ ] Frankfurter sempre falhando → `FAILED_ENRICHMENT` + DLQ + métricas
-- [ ] 10 POST simultâneos iguais → 1 pedido, 1 job
 - [ ] Payload inválido → 400 + registro mascarado
 
 ## Entrega
