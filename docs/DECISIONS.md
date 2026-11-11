@@ -247,8 +247,22 @@ o adapter usa `k_` + base64url da chave: nunca numérico, sem `:`, sem colisão 
 
 ## Resiliência com a Frankfurter
 
-- **Healthcheck** (`GET /health`, terminus): Mongo é crítico; Redis e Frankfurter são *degradáveis*
-  (reportam `degraded`, não derrubam): sem Redis o recebimento continua e a varredura enfileira depois. No start só loga warning: a app sobe mesmo com ela fora, para não perder pedidos.
+- **Healthcheck** (`GET /health`), **três estados**:
+
+  | Situação | `status` | HTTP |
+  |---|---|---|
+  | Tudo de pé | `ok` | 200 |
+  | Redis fora, circuito da Frankfurter aberto/half-open, ou moedas vindas do fallback | `degraded` | 200 |
+  | Mongo fora (ping com timeout de 1 s) | `down` | 503 |
+
+  Só o Mongo derruba: sem ele não há onde gravar pedidos. Com Redis ou Frankfurter fora a app **continua aceitando
+  pedidos** (o enriquecimento só espera), então a instância deve continuar recebendo tráfego do load balancer.
+  Só o Mongo é pingado; Redis e Frankfurter reportam o estado que os clientes já conhecem (conexão, circuito,
+  origem da lista de moedas), então consultar o `/health` nunca gera carga na API externa.
+  Moedas vindas do fallback trazem um `hint`: é o sintoma de `FRANKFURTER_BASE_URL` errada.
+  O `@nestjs/terminus` saiu: ele só tem up/down (qualquer indicador fora vira 503), sem o "degradado".
+  O serviço `app` do docker-compose usa o `/health` como healthcheck (via `fetch` do Node; a imagem alpine não tem
+  `curl`). No boot, a app sobe mesmo com a Frankfurter fora, para não perder pedidos.
 - **Circuit breaker** próprio e genérico (`shared/resilience`), relógio injetado para teste:
   `CIRCUIT_FAILURE_THRESHOLD` falhas **consecutivas** abrem; após `CIRCUIT_RESET_TIMEOUT_MS` vira half-open e
   deixa passar **um** teste por vez; teste ok fecha, teste com falha reabre na hora (por mais um período inteiro).
@@ -302,10 +316,13 @@ nativo durante o atraso do nock dispara um `assert` interno do undici (erro solt
 - **Proteção contra loop:** se um lote vier só com pedidos já vistos na execução, para (defesa contra carimbo
   que não foi renovado). No teste, o fake conta consultas e falha, porque um loop sobre promises que resolvem na
   hora roda só em microtasks e trava o próprio timeout do Vitest.
-- Agendada pelo `@nestjs/schedule` (timer no processo), não por job recorrente do BullMQ: a varredura existe
-  justamente para quando o Redis falhou, então não pode depender dele para disparar.
-- Com várias instâncias da API, cada uma varre; é seguro pelo dedup, só desperdiça consultas. Em produção:
-  lock distribuído ou uma instância dedicada.
+- **Agendada por um timer no processo** (`PeriodicTask`, `SWEEP_INTERVAL_MS`), não por job recorrente do BullMQ:
+  a varredura existe justamente para quando o Redis falhou, então não pode depender dele para disparar. Sem
+  `@nestjs/schedule`: um `setInterval` com duas regras testadas basta — **sem sobreposição** (tick que encontra a
+  rodada anterior em andamento é pulado) e **erro não para o agendamento**. No shutdown, espera a rodada em andamento.
+- Roda nos processos com papel de processamento (`WORKER_ENABLED=true`). Várias instâncias varrendo ao mesmo tempo é
+  seguro pelo dedup, só desperdiça consultas. Em produção: lock distribuído ou uma instância dedicada.
+- Log só quando agiu (pedidos reenfileirados) ou não conseguiu (fila fora, enqueue falhou); silêncio quando não havia nada.
 - Índice próprio `{ status, queue_checked_at }` (a definir junto com os demais no adapter Mongo).
 
 ## API HTTP

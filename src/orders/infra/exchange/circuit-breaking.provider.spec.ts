@@ -81,4 +81,15 @@ describe('CircuitBreakingExchangeRateProvider', () => {
     expect(p.isAvailable()).toBe(true);
     expect(states).toEqual(['open', 'half_open', 'closed']);
   });
+
+  it('exposes the circuit state for the health check', async () => {
+    const p = provider();
+    expect(p.circuitState).toBe('closed');
+    inner.failWith(new ProviderUnavailableError('503'));
+
+    await attempt(p);
+    await attempt(p);
+
+    expect(p.circuitState).toBe('open');
+  });
 });

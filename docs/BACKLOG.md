@@ -26,6 +26,8 @@ Cada item começa com o teste vermelho. Decisões e motivos em [DECISIONS.md](DE
 - [x] `POST /webhooks/orders`: DTO, 202/200/409/422/400/413, formato único de erro, `x-request-id`
 - [x] Worker BullMQ: processor puro + worker; rate limit sem gastar tentativa, DLQ, libera `jobId` para a varredura,
       `WORKER_ENABLED`; e2e do fluxo completo (enriquecido, mesma moeda, falha + DLQ, circuito pausando a fila)
+- [x] Varredura agendada (`PeriodicTask` sem sobreposição) + e2e: órfão sem job termina enriquecido
+- [x] `GET /health` com 3 estados (só Mongo derruba), hint de `FRANKFURTER_BASE_URL`, healthcheck no compose
 
 ## Casos de uso (unit, com fakes)
 
@@ -43,9 +45,6 @@ Cada item começa com o teste vermelho. Decisões e motivos em [DECISIONS.md](DE
 - [ ] Swagger: `@ApiProperty` nos DTOs e respostas documentadas
 - [ ] `GET /orders`, `GET /orders/:id` (sem expor o array de chaves), `GET /queue/metrics`
 - [ ] `POST /orders/reprocess`, `GET /webhooks/rejections`
-- [ ] `GET /health` (Mongo crítico; Redis e Frankfurter degradáveis), check de `/currencies` no boot
-      (expõe `FRANKFURTER_BASE_URL` errada)
-- [ ] Agendamento da varredura (`@nestjs/schedule`, `SWEEP_INTERVAL_MS`), log do resultado de cada execução
 
 ## E2E
 

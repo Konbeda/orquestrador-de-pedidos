@@ -109,4 +109,22 @@ describe('CachedSupportedCurrencies', () => {
     );
     expect(await currencies().warmUp()).toBe('fallback');
   });
+
+  it('says where the current list came from, for the health check', async () => {
+    const fromProvider = currencies();
+    await fromProvider.warmUp();
+    expect(fromProvider.listSource).toBe('provider');
+
+    source.listCurrencies.mockRejectedValue(
+      new ProviderUnavailableError('down'),
+    );
+    const fromFallback = currencies();
+    await fromFallback.warmUp();
+    expect(fromFallback.listSource).toBe('fallback');
+
+    // A later failure keeps the provider list: still reported as provider.
+    now = 6 * HOUR;
+    await fromProvider.isSupported('EUR');
+    expect(fromProvider.listSource).toBe('provider');
+  });
 });

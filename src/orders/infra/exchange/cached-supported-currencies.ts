@@ -40,6 +40,11 @@ export class CachedSupportedCurrencies extends SupportedCurrencies {
     return this.codes!.has(currency.trim().toUpperCase());
   }
 
+  /** Where the list in use came from (a stale provider list still counts as provider). */
+  get listSource(): 'provider' | 'fallback' {
+    return this.fromProvider ? 'provider' : 'fallback';
+  }
+
   /** Called at boot, so the first webhook does not pay for the request. */
   async warmUp(): Promise<'provider' | 'fallback'> {
     await this.refresh();

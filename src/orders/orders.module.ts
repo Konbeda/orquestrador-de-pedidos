@@ -4,6 +4,7 @@ import { MongooseModule, getModelToken } from '@nestjs/mongoose';
 import type { Model } from 'mongoose';
 import type { Env } from '../config/env.schema.js';
 import { EnrichOrder } from './application/enrich-order.use-case.js';
+import { EnqueueStaleOrders } from './application/enqueue-stale-orders.use-case.js';
 import { EnrichmentQueue } from './application/ports/enrichment.queue.js';
 import { ExchangeRateProvider } from './application/ports/exchange-rate.provider.js';
 import { OrderRepository } from './application/ports/order.repository.js';
@@ -20,6 +21,7 @@ import {
 } from './infra/persistence/order.schema.js';
 import { BullMqEnrichmentQueue } from './infra/queue/bullmq-enrichment.queue.js';
 import { EnrichmentWorkerRunner } from './infra/queue/enrichment-worker.runner.js';
+import { OrphanSweeperRunner } from './infra/queue/orphan-sweeper.runner.js';
 import { WebhooksController } from './http/webhooks.controller.js';
 
 type Config = ConfigService<Env, true>;
@@ -35,6 +37,12 @@ const logger = new Logger('OrdersModule');
     MongooseModule.forFeature([{ name: ORDER_MODEL, schema: OrderSchema }]),
   ],
   controllers: [WebhooksController],
+  // Read by the health check (state only, no network round trips).
+  exports: [
+    CachedSupportedCurrencies,
+    CircuitBreakingExchangeRateProvider,
+    EnrichmentQueue,
+  ],
   providers: [
     {
       provide: OrderRepository,
@@ -71,7 +79,7 @@ const logger = new Logger('OrdersModule');
         }),
     },
     {
-      provide: SupportedCurrencies,
+      provide: CachedSupportedCurrencies,
       inject: [FrankfurterClient, ConfigService],
       useFactory: async (frankfurter: FrankfurterClient, config: Config) => {
         const currencies = new CachedSupportedCurrencies(frankfurter, {
@@ -91,8 +99,9 @@ const logger = new Logger('OrdersModule');
         return currencies;
       },
     },
+    { provide: SupportedCurrencies, useExisting: CachedSupportedCurrencies },
     {
-      provide: ExchangeRateProvider,
+      provide: CircuitBreakingExchangeRateProvider,
       inject: [FrankfurterClient, ConfigService],
       useFactory: (frankfurter: FrankfurterClient, config: Config) =>
         new CircuitBreakingExchangeRateProvider(frankfurter, {
@@ -109,6 +118,10 @@ const logger = new Logger('OrdersModule');
         }),
     },
     {
+      provide: ExchangeRateProvider,
+      useExisting: CircuitBreakingExchangeRateProvider,
+    },
+    {
       provide: EnrichOrder,
       inject: [OrderRepository, ExchangeRateProvider, ConfigService],
       useFactory: (
@@ -123,6 +136,20 @@ const logger = new Logger('OrdersModule');
         }),
     },
     EnrichmentWorkerRunner,
+    {
+      provide: EnqueueStaleOrders,
+      inject: [OrderRepository, EnrichmentQueue, ConfigService],
+      useFactory: (
+        orders: OrderRepository,
+        queue: EnrichmentQueue,
+        config: Config,
+      ) =>
+        new EnqueueStaleOrders(orders, queue, {
+          staleAfterMs: config.get('STALE_ORDER_AFTER_MS', { infer: true }),
+          batchSize: config.get('SWEEP_BATCH_SIZE', { infer: true }),
+        }),
+    },
+    OrphanSweeperRunner,
     {
       provide: ReceiveOrder,
       inject: [

@@ -7,6 +7,7 @@ import {
   CircuitBreaker,
   CircuitOpenError,
   type CircuitBreakerOptions,
+  type CircuitState,
 } from '../../../shared/resilience/circuit-breaker.js';
 
 export type CircuitBreakingSettings = Omit<CircuitBreakerOptions, 'isFailure'>;
@@ -35,6 +36,11 @@ export class CircuitBreakingExchangeRateProvider extends ExchangeRateProvider {
 
   isAvailable(): boolean {
     return this.breaker.isAvailable();
+  }
+
+  /** For the health check. */
+  get circuitState(): CircuitState {
+    return this.breaker.state;
   }
 
   async getRate(from: string, to: string): Promise<ExchangeRate> {
