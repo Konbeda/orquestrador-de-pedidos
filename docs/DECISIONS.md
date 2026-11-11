@@ -40,6 +40,13 @@ Somas e conversões em **centavos inteiros** (`money.ts`), para não acumular er
 Transições inválidas lançam erros de domínio (`InvalidOrderTransitionError`, `OrderBeingProcessedError`,
 `ReprocessNotAllowedError`), que a camada HTTP traduz para 409/422.
 
+## Camadas (ports & adapters)
+
+Casos de uso (`orders/application`) dependem só de **ports** (classes abstratas: `OrderRepository`,
+`EnrichmentQueue`, `SupportedCurrencies`) e não importam Nest, Mongo ou BullMQ. Nos testes unitários, os ports
+são **fakes em memória** (`test/fakes`) que imitam as garantias reais: índice único, lock otimista e dedup por `jobId`.
+Os fakes também simulam corridas e Redis fora, cenários difíceis de reproduzir com infraestrutura real.
+
 ## Idempotência (3 camadas)
 
 1. **Banco (fonte da verdade):** índice `unique` em `idempotency_keys` e em `order_id`.
@@ -52,9 +59,22 @@ Transições inválidas lançam erros de domínio (`InvalidOrderTransitionError`
 
 | Situação | Resposta |
 |---|---|
-| Mesma `idempotency_key` | 200 + pedido existente, sem reenfileirar |
+| Mesma `idempotency_key` | 200 + pedido existente, sem reenfileirar (exceto reparo, abaixo) |
+| Mesma `idempotency_key` com **outro** `order_id` | 422: o cliente reaproveitou a chave para outra operação |
 | Mesmo `order_id`, outra chave, `ORDER_DUPLICATE_POLICY=reject` (padrão) | 409 |
 | Mesmo `order_id`, outra chave, `ORDER_DUPLICATE_POLICY=update` | Ver tabela abaixo |
+
+**Corrida entre requisições:** as buscas por chave e por `order_id` são só o caminho rápido. Se duas requisições
+passam juntas pelas buscas, o índice único recusa o insert da perdedora (`DuplicateOrderError`), e o caso de uso
+**reavalia a requisição uma vez**, agora enxergando o pedido da vencedora (vira 200 duplicate ou 409).
+
+**Reparo de enqueue (consistência banco ↔ fila sem outbox):** se o insert funcionou e o enqueue falhou (Redis fora),
+a requisição devolve 500 e o pedido fica `RECEIVED` sem job. Quando o cliente faz retry com a mesma chave, o pedido
+ainda `RECEIVED` é **enfileirado de novo**; é seguro porque a fila deduplica por `jobId`. Fecha a lacuna para clientes
+que fazem retry; o outbox (fora do escopo) fecharia para todos.
+
+**Lock otimista no update:** o update grava só se a `revision` no banco ainda for a que foi lida.
+Duas atualizações simultâneas do mesmo pedido: a perdedora recebe 409 e deve tentar de novo.
 
 Política `update` por status atual:
 
