@@ -147,10 +147,30 @@ Sem índice em `errors`/`error_codes` por enquanto: coleção é muito mais escr
 
 ## Enriquecimento, retry e DLQ
 
-- Erro **temporário** (timeout, 5xx): relança; BullMQ tenta de novo com backoff exponencial
-  (`ENRICHMENT_MAX_ATTEMPTS`, `ENRICHMENT_BACKOFF_MS`).
-- Erro **permanente** (4xx, moeda rejeitada): `UnrecoverableError`, direto para a DLQ.
-- Tentativas esgotadas: job copiado para `orders-enrichment-dlq`, status `FAILED_ENRICHMENT`.
+O caso de uso `EnrichOrder` decide **o que aconteceu** e sinaliza com erros tipados; não conhece BullMQ.
+O worker (adapter) traduz:
+
+| Caso de uso | Quando | Pedido | Worker (BullMQ) |
+|---|---|---|---|
+| `{ outcome: 'enriched' }` | Sucesso | `ENRICHED` | Job concluído |
+| `{ outcome: 'skipped' }` | Pedido já final ou inexistente (job repetido / fantasma) | Não muda | Job concluído |
+| `RetryEnrichmentLater` | Erro temporário com tentativas sobrando | Fica `ENRICHING` | Relança: backoff exponencial |
+| `EnrichmentFailed` | 4xx (já na 1ª tentativa) **ou** última tentativa | `FAILED_ENRICHMENT` + motivo | `UnrecoverableError`, job para a DLQ |
+| `ExchangeProviderPaused` | Circuito aberto (checado antes de tocar no pedido) | Fica `RECEIVED` | `rateLimit` + `RateLimitError`: espera sem gastar tentativa |
+
+- **Classificação:** `ProviderRejectedError` (4xx) → `PROVIDER_REJECTED`, não reprocessável;
+  `ProviderUnavailableError` (timeout, 5xx) → `PROVIDER_UNAVAILABLE`, reprocessável;
+  qualquer outro erro (nosso: bug, banco) → `INTERNAL_ERROR`, reprocessável. Os dois últimos só viram falha final
+  na última tentativa.
+- **`ENRICHING` é gravado antes de chamar o provedor**, para o update do cliente (política `update`) saber que o
+  pedido está em processamento e responder 409 em vez de correr contra o worker.
+- **Cliente atualizou entre a leitura e o `ENRICHING`** (lock otimista): `RetryEnrichmentLater`; a próxima tentativa
+  lê os dados novos. Se era a última tentativa, o job falha com o pedido ainda `RECEIVED`, e a varredura o pega.
+- **Moeda igual à de destino:** taxa 1, sem chamar o provedor (e sem depender do circuito).
+- **Falha final relê o pedido do banco** antes de marcar `FAILED_ENRICHMENT`: a cópia local pode estar pela metade
+  (ex.: completou mas o save falhou).
+- **Lacuna conhecida:** se nem a falha consegue ser gravada (banco fora), o pedido fica `ENRICHING` para sempre; a
+  varredura atual só olha `RECEIVED`. Fecharia com uma varredura de `ENRICHING` parados há muito tempo.
 
 ## Produtor da fila: falhar rápido
 

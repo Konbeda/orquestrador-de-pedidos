@@ -24,6 +24,8 @@ export class ConcurrentUpdateError extends Error {
  * (across all orders) and unique order ids, raising DuplicateOrderError.
  */
 export abstract class OrderRepository {
+  /** By internal (database) id, the one carried by queue jobs. */
+  abstract findById(id: string): Promise<Order | null>;
   abstract findByIdempotencyKey(key: string): Promise<Order | null>;
   abstract findByOrderId(orderId: string): Promise<Order | null>;
   /** Stores a new order and returns it with its generated id. */

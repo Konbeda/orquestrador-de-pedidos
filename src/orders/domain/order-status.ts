@@ -14,5 +14,7 @@ export const FailureReason = {
   PROVIDER_UNAVAILABLE: 'PROVIDER_UNAVAILABLE',
   /** Provider answered 4xx: retrying the same request cannot succeed. */
   PROVIDER_REJECTED: 'PROVIDER_REJECTED',
+  /** Our own failure (bug, database hiccup) until the attempts ran out. Worth reprocessing. */
+  INTERNAL_ERROR: 'INTERNAL_ERROR',
 } as const;
 export type FailureReason = (typeof FailureReason)[keyof typeof FailureReason];

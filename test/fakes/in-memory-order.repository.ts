@@ -21,10 +21,17 @@ export class InMemoryOrderRepository extends OrderRepository {
   private nextId = 1;
   private pendingConcurrentInsert: Order | null = null;
   private pendingConcurrentUpdate = false;
+  /** One entry per upcoming update call: an Error fails that call, null lets it through. */
+  private plannedUpdateFailures: Array<Error | null> = [];
 
   /** `now` is the clock used to stamp writes; tests move it to age orders. */
   constructor(private readonly now: () => Date = () => new Date()) {
     super();
+  }
+
+  async findById(id: string): Promise<Order | null> {
+    const row = this.rows.get(id);
+    return row ? Order.fromSnapshot(row.snapshot) : null;
   }
 
   async findByIdempotencyKey(key: string): Promise<Order | null> {
@@ -62,6 +69,8 @@ export class InMemoryOrderRepository extends OrderRepository {
   }
 
   async update(order: Order, expectedRevision: number): Promise<void> {
+    const plannedFailure = this.plannedUpdateFailures.shift();
+    if (plannedFailure) throw plannedFailure;
     const row = order.id ? this.rows.get(order.id) : undefined;
     if (!row) throw new Error(`Order ${order.id} does not exist`);
     if (
@@ -110,6 +119,14 @@ export class InMemoryOrderRepository extends OrderRepository {
    */
   simulateConcurrentInsert(winner: Order): void {
     this.pendingConcurrentInsert = winner;
+  }
+
+  /**
+   * Database hiccups on chosen update calls, e.g. `[null, error]` lets the next
+   * update through and fails the one after it.
+   */
+  planUpdateFailures(plan: Array<Error | null>): void {
+    this.plannedUpdateFailures = [...plan];
   }
 
   /** Race simulation: the next update finds a newer revision stored. */
