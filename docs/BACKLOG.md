@@ -24,6 +24,8 @@ Cada item começa com o teste vermelho. Decisões e motivos em [DECISIONS.md](DE
 - [x] `SupportedCurrencies` com cache, fallback e "última lista boa vale mais que o fallback"
 - [x] `OrdersModule` (ports como tokens, `model.init()` antes do tráfego) e `configureApp` compartilhado
 - [x] `POST /webhooks/orders`: DTO, 202/200/409/422/400/413, formato único de erro, `x-request-id`
+- [x] Worker BullMQ: processor puro + worker; rate limit sem gastar tentativa, DLQ, libera `jobId` para a varredura,
+      `WORKER_ENABLED`; e2e do fluxo completo (enriquecido, mesma moeda, falha + DLQ, circuito pausando a fila)
 
 ## Casos de uso (unit, com fakes)
 
@@ -33,8 +35,6 @@ Cada item começa com o teste vermelho. Decisões e motivos em [DECISIONS.md](DE
 
 ## Adapters (integration, Mongo/Redis reais)
 
-- [ ] Worker BullMQ: traduz os erros do `EnrichOrder` (retry com backoff, `UnrecoverableError` + DLQ,
-      `rateLimit` + `RateLimitError` com circuito aberto)
 - [ ] `webhook_rejections`: índices (request_id unique, source+received_at, TTL)
 
 ## HTTP e worker
@@ -49,8 +49,7 @@ Cada item começa com o teste vermelho. Decisões e motivos em [DECISIONS.md](DE
 
 ## E2E
 
-- [ ] POST → 202 → worker → `ENRICHED`
-- [ ] Frankfurter sempre falhando → `FAILED_ENRICHMENT` + DLQ + métricas
+- [ ] `/queue/metrics` refletindo a DLQ depois de uma falha final
 - [ ] Payload inválido → 400 + registro mascarado
 
 ## Entrega

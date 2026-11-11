@@ -53,6 +53,8 @@ describe('POST /webhooks/orders (e2e)', () => {
     app = await createTestApp({
       FRANKFURTER_BASE_URL: `${FRANKFURTER}/v1`,
       BODY_LIMIT: '2kb',
+      // No consumer here: these tests inspect the jobs the webhook leaves in the queue.
+      WORKER_ENABLED: 'false',
     });
     orders = app.get<Connection>(getConnectionToken()).collection('orders');
     queue = new Queue(ENRICHMENT_QUEUE_NAME, {

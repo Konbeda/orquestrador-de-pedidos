@@ -193,6 +193,30 @@ O worker (adapter) traduz:
 - **Lacuna conhecida:** se nem a falha consegue ser gravada (banco fora), o pedido fica `ENRICHING` para sempre; a
   varredura atual só olha `RECEIVED`. Fecharia com uma varredura de `ENRICHING` parados há muito tempo.
 
+### Worker (`EnrichmentWorker` + `EnrichmentJobProcessor`)
+
+O processor é puro (testado sem Redis) e traduz o resultado do caso de uso para o BullMQ; o worker só liga as peças.
+Comportamentos do BullMQ 6 **conferidos com Redis real** nos testes de integração:
+
+| Caso de uso | Processor | Efeito medido |
+|---|---|---|
+| `ExchangeProviderPaused` | `queue.rateLimit(CIRCUIT_RESET_TIMEOUT_MS)` + `RateLimitError` | Job volta para a fila **sem gastar tentativa** (4 pausas + sucesso com orçamento de 3) |
+| `EnrichmentFailed` | Copia para `orders-enrichment-dlq` + `UnrecoverableError` | Não tenta de novo; DLQ com `jobId`, pedido, `request_id`, motivo, erro, tentativas, data |
+| Temporário com tentativas | Relança | Backoff exponencial do job |
+| Qualquer erro **na última tentativa** com o pedido ainda `RECEIVED` | `ReleaseJobForSweeper`; o worker **apaga o job falho** | O `jobId` fica livre e a varredura consegue reenfileirar |
+
+- **Por que apagar o job falho:** o BullMQ guarda jobs falhos (`removeOnFail`, 7 dias) e o dedup por `jobId` ignoraria
+  o enqueue da varredura. Acontece quando o cliente atualiza o pedido no meio, ou o banco oscila antes do `ENRICHING`.
+- **`queue.rateLimit` e não `worker.rateLimit`:** o do worker está *deprecated* no BullMQ 6; o da fila pausa **todos**
+  os workers de todas as instâncias de uma vez (o circuito aberto vale para todos).
+- **Conexões:** o produtor falha rápido (webhook esperando); o worker reconecta indefinidamente
+  (`maxRetriesPerRequest: null`, exigido pelo BullMQ na conexão bloqueante) para atravessar reinícios do Redis.
+- **DLQ** é uma fila sem consumidor: registro do que falhou de vez, para inspeção e métricas. O pedido em
+  `FAILED_ENRICHMENT` continua sendo a fonte da verdade; se a cópia na DLQ falhar, o job tenta de novo e a próxima
+  execução vê o pedido final e encerra (a cópia é perdida, o estado do pedido não).
+- **`WORKER_ENABLED`** (padrão `true`): a mesma imagem roda como API + worker ou só API. Em produção, API e workers
+  escalam separados. No shutdown, o worker termina os jobs em andamento antes de sair.
+
 ## Produtor da fila: falhar rápido
 
 Medido com Redis real (BullMQ 6 + ioredis 6), tempo de um `queue.add`:

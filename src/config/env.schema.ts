@@ -39,6 +39,11 @@ export const envSchema = z.object({
   ENRICHMENT_MAX_ATTEMPTS: positiveInt.default(5),
   ENRICHMENT_BACKOFF_MS: positiveInt.default(1000),
   ENRICHMENT_CONCURRENCY: positiveInt.default(5),
+  // false runs this process as API only (scale API and workers separately).
+  WORKER_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((value) => value === 'true'),
   /** Comma-separated waits between enqueue attempts inside the webhook request. */
   ENQUEUE_RETRY_DELAYS_MS: z
     .string()

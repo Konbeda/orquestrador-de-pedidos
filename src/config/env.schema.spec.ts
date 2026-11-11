@@ -23,6 +23,7 @@ describe('validateEnv', () => {
       STALE_ORDER_AFTER_MS: 120_000,
       SWEEP_BATCH_SIZE: 100,
       REDIS_COMMAND_TIMEOUT_MS: 500,
+      WORKER_ENABLED: true,
     });
   });
 
@@ -92,6 +93,15 @@ describe('validateEnv', () => {
     expect(() =>
       validateEnv({ ...minimalEnv, ENQUEUE_RETRY_DELAYS_MS: '100,abc' }),
     ).toThrow(/ENQUEUE_RETRY_DELAYS_MS/);
+  });
+
+  it('reads WORKER_ENABLED as a boolean, refusing anything but true/false', () => {
+    expect(
+      validateEnv({ ...minimalEnv, WORKER_ENABLED: 'false' }).WORKER_ENABLED,
+    ).toBe(false);
+    expect(() => validateEnv({ ...minimalEnv, WORKER_ENABLED: 'no' })).toThrow(
+      /WORKER_ENABLED/,
+    );
   });
 
   it('refuses zero attempts, since a job must run at least once', () => {

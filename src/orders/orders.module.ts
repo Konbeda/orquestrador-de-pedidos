@@ -3,11 +3,14 @@ import { ConfigService } from '@nestjs/config';
 import { MongooseModule, getModelToken } from '@nestjs/mongoose';
 import type { Model } from 'mongoose';
 import type { Env } from '../config/env.schema.js';
+import { EnrichOrder } from './application/enrich-order.use-case.js';
 import { EnrichmentQueue } from './application/ports/enrichment.queue.js';
+import { ExchangeRateProvider } from './application/ports/exchange-rate.provider.js';
 import { OrderRepository } from './application/ports/order.repository.js';
 import { SupportedCurrencies } from './application/ports/supported-currencies.js';
 import { ReceiveOrder } from './application/receive-order.use-case.js';
 import { CachedSupportedCurrencies } from './infra/exchange/cached-supported-currencies.js';
+import { CircuitBreakingExchangeRateProvider } from './infra/exchange/circuit-breaking.provider.js';
 import { FrankfurterClient } from './infra/exchange/frankfurter.client.js';
 import { MongoOrderRepository } from './infra/persistence/mongo-order.repository.js';
 import {
@@ -16,6 +19,7 @@ import {
   type OrderDocument,
 } from './infra/persistence/order.schema.js';
 import { BullMqEnrichmentQueue } from './infra/queue/bullmq-enrichment.queue.js';
+import { EnrichmentWorkerRunner } from './infra/queue/enrichment-worker.runner.js';
 import { WebhooksController } from './http/webhooks.controller.js';
 
 type Config = ConfigService<Env, true>;
@@ -87,6 +91,38 @@ const logger = new Logger('OrdersModule');
         return currencies;
       },
     },
+    {
+      provide: ExchangeRateProvider,
+      inject: [FrankfurterClient, ConfigService],
+      useFactory: (frankfurter: FrankfurterClient, config: Config) =>
+        new CircuitBreakingExchangeRateProvider(frankfurter, {
+          failureThreshold: config.get('CIRCUIT_FAILURE_THRESHOLD', {
+            infer: true,
+          }),
+          resetTimeoutMs: config.get('CIRCUIT_RESET_TIMEOUT_MS', {
+            infer: true,
+          }),
+          onStateChange: (state) =>
+            state === 'closed'
+              ? logger.log('Frankfurter circuit closed: calls resumed')
+              : logger.warn(`Frankfurter circuit ${state}`),
+        }),
+    },
+    {
+      provide: EnrichOrder,
+      inject: [OrderRepository, ExchangeRateProvider, ConfigService],
+      useFactory: (
+        orders: OrderRepository,
+        provider: ExchangeRateProvider,
+        config: Config,
+      ) =>
+        new EnrichOrder(orders, provider, {
+          targetCurrency: config.get('ENRICHMENT_TARGET_CURRENCY', {
+            infer: true,
+          }),
+        }),
+    },
+    EnrichmentWorkerRunner,
     {
       provide: ReceiveOrder,
       inject: [
