@@ -172,6 +172,17 @@ describe('Order', () => {
   });
 
   describe('requeueForReprocess', () => {
+    /** The reason a refused reprocess reports (the HTTP answer lists it per order). */
+    const reasonOf = (attempt: () => void) => {
+      try {
+        attempt();
+      } catch (error) {
+        expect(error).toBeInstanceOf(ReprocessNotAllowedError);
+        return (error as ReprocessNotAllowedError).reason;
+      }
+      throw new Error('expected the reprocess to be refused');
+    };
+
     it('sends a retryable failure back to RECEIVED and counts the attempt', () => {
       const order = orderIn(OrderStatus.FAILED_ENRICHMENT);
 
@@ -182,15 +193,24 @@ describe('Order', () => {
       expect(order.failure).toBeNull();
     });
 
+    it('gives the next job its own key: the failed job may still hold the old id', () => {
+      const order = orderIn(OrderStatus.FAILED_ENRICHMENT);
+      expect(order.jobKey).toBe('key-1');
+
+      order.requeueForReprocess({ maxReprocessCount: 3 });
+
+      expect(order.jobKey).toBe('key-1#reprocess-1');
+    });
+
     it('refuses a failure that is not retryable', () => {
       const order = orderIn(OrderStatus.ENRICHING);
       order.failEnrichment(FailureReason.PROVIDER_REJECTED, {
         retryable: false,
       });
 
-      expect(() => order.requeueForReprocess({ maxReprocessCount: 3 })).toThrow(
-        ReprocessNotAllowedError,
-      );
+      expect(
+        reasonOf(() => order.requeueForReprocess({ maxReprocessCount: 3 })),
+      ).toBe('NOT_RETRYABLE');
     });
 
     it('refuses once the reprocess limit is reached, so a bad order cannot loop forever', () => {
@@ -201,9 +221,9 @@ describe('Order', () => {
         retryable: true,
       });
 
-      expect(() => order.requeueForReprocess({ maxReprocessCount: 1 })).toThrow(
-        ReprocessNotAllowedError,
-      );
+      expect(
+        reasonOf(() => order.requeueForReprocess({ maxReprocessCount: 1 })),
+      ).toBe('LIMIT_REACHED');
     });
 
     it.each([
@@ -211,9 +231,11 @@ describe('Order', () => {
       OrderStatus.ENRICHING,
       OrderStatus.ENRICHED,
     ])('refuses an order in %s', (status) => {
-      expect(() =>
-        orderIn(status).requeueForReprocess({ maxReprocessCount: 3 }),
-      ).toThrow(ReprocessNotAllowedError);
+      expect(
+        reasonOf(() =>
+          orderIn(status).requeueForReprocess({ maxReprocessCount: 3 }),
+        ),
+      ).toBe('NOT_FAILED');
     });
   });
 

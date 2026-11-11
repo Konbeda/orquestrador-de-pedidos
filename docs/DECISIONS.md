@@ -323,11 +323,27 @@ nativo durante o atraso do nock dispara um `assert` interno do undici (erro solt
 
 ## Reprocessamento
 
-- `POST /orders/reprocess`: reenfileira `FAILED_ENRICHMENT` com `retryable: true`.
-- Fila separada `orders-enrichment-reprocess`, concorrência baixa e `limiter`
-  (`REPROCESS_RATE_PER_SECOND`), para não competir com pedidos novos nem disparar rajada na Frankfurter.
-- Novo `jobId` (chave atual + sufixo de reprocesso, codificado como os demais), limite `REPROCESS_MAX_COUNT`.
-- Automático (job recorrente, só com circuito fechado): candidato a ficar documentado se o tempo apertar.
+`POST /orders/reprocess` (`ReprocessOrders`) → 202 `{ reprocessed: [{ id, pending_enqueue }], skipped: [{ id, reason }] }`.
+
+- **Dois modos:** `order_ids` (até 100, o suporte escolhe) ou lote (`limit` até 500) com todos os reprocessáveis,
+  mais antigos primeiro.
+- **Reprocessável** = `FAILED_ENRICHMENT`, `retryable` e reprocessado menos de `REPROCESS_MAX_COUNT` vezes. O limite
+  fica **na consulta** do lote: sem isso, os pedidos esgotados voltariam sempre no topo e travariam os outros.
+- **Recusas explicadas por pedido:** `NOT_FOUND`, `NOT_FAILED`, `NOT_RETRYABLE`, `LIMIT_REACHED` (motivo vindo do
+  domínio) e `CONCURRENT_UPDATE` (lock otimista).
+- **Ordem:** grava `RECEIVED` primeiro, depois enfileira. Fila fora → `pending_enqueue: true` e a varredura de órfãos
+  cuida (mesma regra do webhook).
+- **`jobKey` nova a cada reprocesso** (`chave#reprocess-N`, codificada como os demais `jobId`): o job da falha
+  anterior fica guardado (`removeOnFail`) com o id antigo, e o dedup ignoraria o novo enqueue. A varredura e o webhook
+  também usam a `jobKey`, então um pedido reprocessado que ficar órfão é pego com o id certo. O mutante que remove o
+  sufixo faz o e2e travar exatamente assim.
+- **Mesma fila, prioridade baixa** (mudança em relação ao plano de fila separada): no BullMQ, jobs sem prioridade
+  (pedidos novos) são processados antes dos com prioridade — conferido com Redis real (um reprocesso enfileirado
+  antes sai depois de um pedido novo). A fila separada com rate limit tinha um conflito: lotes grandes ficariam
+  minutos esperando, a varredura os veria "parados" e os jogaria na fila principal, e o dedup por `jobId` não
+  funciona entre filas (processamento duplo e fim da faixa lenta). A Frankfurter continua protegida pela concorrência
+  do worker e pelo circuit breaker. `REPROCESS_RATE_PER_SECOND` saiu.
+- **Reprocesso automático** (job recorrente quando o circuito fecha): fica como melhoria; hoje é manual.
 
 ## Varredura de órfãos
 

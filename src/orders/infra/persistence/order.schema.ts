@@ -88,5 +88,5 @@ OrderSchema.index({ order_id: 1 }, { unique: true });
 OrderSchema.index({ status: 1, queue_checked_at: 1 });
 // GET /orders?status= newest first, with the cursor (_id < before) in the same index scan.
 OrderSchema.index({ status: 1, _id: -1 });
-// Reprocess scan (retryable failures).
-OrderSchema.index({ status: 1, 'failure.retryable': 1, created_at: -1 });
+// Reprocess scan: retryable failures, oldest first.
+OrderSchema.index({ status: 1, 'failure.retryable': 1, _id: 1 });

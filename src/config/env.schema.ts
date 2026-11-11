@@ -62,7 +62,6 @@ export const envSchema = z.object({
   CIRCUIT_RESET_TIMEOUT_MS: positiveInt.default(30_000),
 
   REPROCESS_MAX_COUNT: positiveInt.default(3),
-  REPROCESS_RATE_PER_SECOND: positiveInt.default(5),
 
   // Orphan sweeper: RECEIVED orders unchecked for STALE_ORDER_AFTER_MS get enqueued again.
   SWEEP_INTERVAL_MS: positiveInt.default(60_000),

@@ -183,6 +183,29 @@ describe('EnrichmentWorker (integration, real Redis)', () => {
     expect(enrich.commands.every((c) => c.attempt === 1)).toBe(true);
   });
 
+  it('takes new orders before low priority (reprocess) jobs, even ones enqueued earlier', async () => {
+    const enrich = new ScriptedEnrichOrder([enriched]);
+    await producer.enqueue({
+      jobId: 'old',
+      orderId: 'order-reprocess',
+      requestId: 'r',
+      priority: 'low',
+    });
+    await enqueue('fresh');
+
+    start(enrich);
+
+    await waitFor(
+      async () => enrich.commands.length,
+      (n) => n === 2,
+      { description: 'both jobs' },
+    );
+    expect(enrich.commands.map((c) => c.orderId)).toEqual([
+      'order-fresh',
+      'order-reprocess',
+    ]);
+  });
+
   it('when attempts run out with the order still RECEIVED, frees the job id for the sweeper', async () => {
     const enrich = new ScriptedEnrichOrder([
       () => new RetryEnrichmentLater(new Error('503')),

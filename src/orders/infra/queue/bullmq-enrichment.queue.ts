@@ -10,6 +10,8 @@ export const ENRICHMENT_QUEUE_NAME = 'orders-enrichment';
 /** Final failures, copied by the worker. Nobody consumes it. */
 export const DEAD_LETTER_QUEUE_NAME = 'orders-enrichment-dlq';
 const ENRICH_JOB = 'enrich';
+/** Reprocess jobs: behind every new order (which carry no priority). */
+const LOW_PRIORITY = 10;
 
 export interface BullMqEnrichmentQueueSettings {
   host: string;
@@ -106,7 +108,11 @@ export class BullMqEnrichmentQueue extends EnrichmentQueue {
     await this.queue.add(
       ENRICH_JOB,
       { orderId: job.orderId, requestId: job.requestId },
-      { jobId: toJobId(job.jobId) },
+      {
+        jobId: toJobId(job.jobId),
+        // BullMQ takes jobs without priority first; any priority > 0 waits behind them.
+        ...(job.priority === 'low' ? { priority: LOW_PRIORITY } : {}),
+      },
     );
   }
 

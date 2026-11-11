@@ -6,6 +6,7 @@ import {
   BullMqEnrichmentQueue,
   ENRICHMENT_QUEUE_NAME,
   QueueUnavailableError,
+  toJobId,
   type BullMqEnrichmentQueueSettings,
 } from '../../src/orders/infra/queue/bullmq-enrichment.queue.js';
 import { waitFor } from '../helpers/wait-for.js';
@@ -96,6 +97,16 @@ describe('BullMqEnrichmentQueue (integration)', () => {
         type: 'exponential',
         delay: 1000,
       });
+    });
+
+    it('stores low priority jobs (reprocess) with a BullMQ priority; new orders have none', async () => {
+      await queue.enqueue({ ...job('fresh') });
+      await queue.enqueue({ ...job('again'), priority: 'low' });
+
+      const fresh = await inspector.getJob(toJobId('fresh'));
+      const again = await inspector.getJob(toJobId('again'));
+      expect(fresh!.opts.priority ?? 0).toBe(0);
+      expect(again!.opts.priority).toBeGreaterThan(0);
     });
 
     it('keeps a single job when the same jobId is enqueued twice', async () => {

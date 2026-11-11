@@ -49,9 +49,7 @@ describe('MongoOrderRepository: storage details', () => {
     expect(byKey['{"idempotency_keys":1}']).toMatchObject({ unique: true });
     expect(byKey['{"order_id":1}']).toMatchObject({ unique: true });
     expect(byKey['{"status":1,"queue_checked_at":1}']).toBeDefined();
-    expect(
-      byKey['{"status":1,"failure.retryable":1,"created_at":-1}'],
-    ).toBeDefined();
+    expect(byKey['{"status":1,"failure.retryable":1,"_id":1}']).toBeDefined();
   });
 
   it('stores snake_case fields, matching the API payload, with timestamps', async () => {

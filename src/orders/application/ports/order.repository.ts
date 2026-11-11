@@ -40,6 +40,14 @@ export abstract class OrderRepository {
   abstract findByOrderId(orderId: string): Promise<Order | null>;
   /** Newest first. */
   abstract list(query: OrderListQuery): Promise<Order[]>;
+  /**
+   * FAILED_ENRICHMENT, retryable, reprocessed fewer than `maxReprocessCount` times,
+   * oldest first. The limit is in the query so exhausted orders never fill a batch.
+   */
+  abstract findRetryableFailures(query: {
+    limit: number;
+    maxReprocessCount: number;
+  }): Promise<Order[]>;
   /** Stores a new order and returns it with its generated id. */
   abstract insert(order: Order): Promise<Order>;
   /** Saves only if the stored revision still equals `expectedRevision`, else ConcurrentUpdateError. */

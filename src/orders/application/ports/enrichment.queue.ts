@@ -5,6 +5,11 @@ export interface EnrichmentJob {
   orderId: string;
   /** Correlates the job's logs with the HTTP request that created it. */
   requestId: string;
+  /**
+   * `low` for reprocessing: jobs without priority (new orders) are taken first,
+   * so a large reprocess batch never delays fresh orders.
+   */
+  priority?: 'low';
 }
 
 export abstract class EnrichmentQueue {

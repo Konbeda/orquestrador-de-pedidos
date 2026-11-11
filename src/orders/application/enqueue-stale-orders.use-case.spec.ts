@@ -78,6 +78,21 @@ describe('EnqueueStaleOrders (orphan sweeper)', () => {
     ]);
   });
 
+  it('a reprocessed orphan is enqueued under its new job key (the failed job keeps the old one)', async () => {
+    const order = Order.receive(props(1));
+    order.startEnrichment();
+    order.failEnrichment(FailureReason.PROVIDER_UNAVAILABLE, {
+      retryable: true,
+    });
+    order.requeueForReprocess({ maxReprocessCount: 3 });
+    await repository.seed(order);
+    advance(3 * MINUTE);
+
+    await sweeper().execute();
+
+    expect(queue.jobs.map((job) => job.jobId)).toEqual(['key-1#reprocess-1']);
+  });
+
   it('leaves alone a RECEIVED order younger than the threshold', async () => {
     await receive(1);
     advance(1 * MINUTE);

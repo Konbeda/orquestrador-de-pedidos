@@ -56,7 +56,7 @@ export class EnqueueStaleOrders {
         seen.add(order.id!);
         try {
           await this.queue.enqueue({
-            jobId: order.currentIdempotencyKey,
+            jobId: order.jobKey,
             orderId: order.id!,
             requestId,
           });

@@ -10,6 +10,7 @@ import { ExchangeRateProvider } from './application/ports/exchange-rate.provider
 import { OrderRepository } from './application/ports/order.repository.js';
 import { SupportedCurrencies } from './application/ports/supported-currencies.js';
 import { ReceiveOrder } from './application/receive-order.use-case.js';
+import { ReprocessOrders } from './application/reprocess-orders.use-case.js';
 import { CachedSupportedCurrencies } from './infra/exchange/cached-supported-currencies.js';
 import { CircuitBreakingExchangeRateProvider } from './infra/exchange/circuit-breaking.provider.js';
 import { FrankfurterClient } from './infra/exchange/frankfurter.client.js';
@@ -151,6 +152,18 @@ const logger = new Logger('OrdersModule');
         }),
     },
     OrphanSweeperRunner,
+    {
+      provide: ReprocessOrders,
+      inject: [OrderRepository, EnrichmentQueue, ConfigService],
+      useFactory: (
+        orders: OrderRepository,
+        queue: EnrichmentQueue,
+        config: Config,
+      ) =>
+        new ReprocessOrders(orders, queue, {
+          maxReprocessCount: config.get('REPROCESS_MAX_COUNT', { infer: true }),
+        }),
+    },
     {
       provide: ReceiveOrder,
       inject: [

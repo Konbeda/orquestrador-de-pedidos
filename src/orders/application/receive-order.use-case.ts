@@ -181,7 +181,7 @@ export class ReceiveOrder {
     requestId: string,
   ): Promise<EnqueueOutcome> {
     const job = {
-      jobId: order.currentIdempotencyKey,
+      jobId: order.jobKey,
       orderId: order.id!,
       requestId,
     };

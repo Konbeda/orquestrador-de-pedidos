@@ -70,8 +70,16 @@ export class OrderBeingProcessedError extends Error {
   }
 }
 
+export type ReprocessRefusal = 'NOT_FAILED' | 'NOT_RETRYABLE' | 'LIMIT_REACHED';
+
 export class ReprocessNotAllowedError extends Error {
   override name = 'ReprocessNotAllowedError';
+  constructor(
+    readonly reason: ReprocessRefusal,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 /**
@@ -129,9 +137,20 @@ export class Order {
   get idempotencyKeys(): readonly string[] {
     return this.state.idempotencyKeys;
   }
-  /** Key of the latest operation applied; used as the queue jobId. */
+  /** Key of the latest operation applied. */
   get currentIdempotencyKey(): string {
     return this.state.idempotencyKeys.at(-1)!;
+  }
+  /**
+   * Queue job id for this order's current enrichment. A reprocess needs a new one:
+   * the failed job of the previous run may still be kept under the old id, and the
+   * queue would ignore the enqueue as a duplicate.
+   */
+  get jobKey(): string {
+    const key = this.currentIdempotencyKey;
+    return this.reprocessCount === 0
+      ? key
+      : `${key}#reprocess-${this.reprocessCount}`;
   }
   get currency(): string {
     return this.state.currency;
@@ -196,16 +215,19 @@ export class Order {
   }): void {
     if (this.status !== OrderStatus.FAILED_ENRICHMENT) {
       throw new ReprocessNotAllowedError(
+        'NOT_FAILED',
         `Order ${this.orderId} is ${this.status}, not FAILED_ENRICHMENT`,
       );
     }
     if (!this.failure?.retryable) {
       throw new ReprocessNotAllowedError(
+        'NOT_RETRYABLE',
         `Order ${this.orderId} failed with a non retryable reason`,
       );
     }
     if (this.reprocessCount >= maxReprocessCount) {
       throw new ReprocessNotAllowedError(
+        'LIMIT_REACHED',
         `Order ${this.orderId} reached the reprocess limit (${maxReprocessCount})`,
       );
     }

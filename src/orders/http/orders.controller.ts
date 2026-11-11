@@ -1,4 +1,18 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+  Query,
+  Req,
+} from '@nestjs/common';
+import type { Request } from 'express';
+import { ReprocessOrders } from '../application/reprocess-orders.use-case.js';
+import { requestIdOf } from '../../shared/http/request-id.js';
+import { ReprocessOrdersDto } from './reprocess-orders.dto.js';
 import { OrderRepository } from '../application/ports/order.repository.js';
 import {
   BullMqEnrichmentQueue,
@@ -23,7 +37,26 @@ export class OrdersController {
   constructor(
     private readonly orders: OrderRepository,
     private readonly queue: BullMqEnrichmentQueue,
+    private readonly reprocessOrders: ReprocessOrders,
   ) {}
+
+  /** 202: the orders go back to the queue; GET /orders/:id follows them. */
+  @Post('orders/reprocess')
+  @HttpCode(HttpStatus.ACCEPTED)
+  async reprocess(@Body() body: ReprocessOrdersDto, @Req() req: Request) {
+    const result = await this.reprocessOrders.execute({
+      orderIds: body.order_ids,
+      limit: body.limit,
+      requestId: requestIdOf(req),
+    });
+    return {
+      reprocessed: result.reprocessed.map((r) => ({
+        id: r.id,
+        pending_enqueue: r.pendingEnqueue,
+      })),
+      skipped: result.skipped,
+    };
+  }
 
   @Get('orders')
   async list(@Query() query: ListOrdersQuery): Promise<OrderPage> {

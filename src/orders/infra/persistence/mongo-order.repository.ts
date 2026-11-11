@@ -59,6 +59,25 @@ export class MongoOrderRepository extends OrderRepository {
     return documents.map((doc) => this.toOrder(doc));
   }
 
+  async findRetryableFailures({
+    limit,
+    maxReprocessCount,
+  }: {
+    limit: number;
+    maxReprocessCount: number;
+  }): Promise<Order[]> {
+    const documents = await this.model
+      .find({
+        status: OrderStatus.FAILED_ENRICHMENT,
+        'failure.retryable': true,
+        reprocess_count: { $lt: maxReprocessCount },
+      })
+      .sort({ _id: 1 })
+      .limit(limit)
+      .lean<OrderDocument[]>();
+    return documents.map((doc) => this.toOrder(doc));
+  }
+
   async insert(order: Order): Promise<Order> {
     try {
       const created = await this.model.create(

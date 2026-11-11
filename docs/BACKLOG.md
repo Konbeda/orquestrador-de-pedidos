@@ -32,11 +32,12 @@ Cada item começa com o teste vermelho. Decisões e motivos em [DECISIONS.md](DE
       (contagens, pausa do circuito, DLQ; 503 rápido com Redis fora)
 - [x] Auditoria em `webhook_rejections`: allowlist + máscara, nomes de campos desconhecidos, hash dos bytes brutos,
       TTL com `collMod`, `GET /webhooks/rejections`
+- [x] `POST /orders/reprocess`: ids ou lote, recusas explicadas, `jobKey` nova, prioridade baixa na mesma fila;
+      e2e: Frankfurter cai, pedido falha, volta, reprocesso enriquece
 
 ## Casos de uso (unit, com fakes)
 
 - [ ] Varredura de `ENRICHING` parados (fecha a lacuna de quando nem a falha consegue ser gravada)
-- [ ] `ReprocessOrders`: só `retryable`, respeita o limite, fila de reprocesso separada, `jobId` novo
 
 ## Adapters (integration, Mongo/Redis reais)
 
@@ -44,7 +45,6 @@ Cada item começa com o teste vermelho. Decisões e motivos em [DECISIONS.md](DE
 ## HTTP e worker
 
 - [ ] Swagger: `@ApiProperty` nos DTOs e respostas documentadas
-- [ ] `POST /orders/reprocess`
 
 ## E2E
 

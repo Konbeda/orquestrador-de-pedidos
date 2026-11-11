@@ -67,6 +67,26 @@ export class InMemoryOrderRepository extends OrderRepository {
       .map((s) => Order.fromSnapshot(s));
   }
 
+  async findRetryableFailures({
+    limit,
+    maxReprocessCount,
+  }: {
+    limit: number;
+    maxReprocessCount: number;
+  }): Promise<Order[]> {
+    const seq = (id: string) => Number(id.slice('order_'.length));
+    return this.snapshots()
+      .filter(
+        (s) =>
+          s.status === OrderStatus.FAILED_ENRICHMENT &&
+          s.failure?.retryable === true &&
+          s.reprocessCount < maxReprocessCount,
+      )
+      .sort((a, b) => seq(a.id!) - seq(b.id!))
+      .slice(0, limit)
+      .map((s) => Order.fromSnapshot(s));
+  }
+
   async insert(order: Order): Promise<Order> {
     if (this.pendingConcurrentInsert) {
       const winner = this.pendingConcurrentInsert;

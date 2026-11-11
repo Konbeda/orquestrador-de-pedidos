@@ -273,6 +273,50 @@ export function describeOrderRepositoryContract(
       });
     });
 
+    describe('findRetryableFailures (reprocess)', () => {
+      /** Stores an order that ended FAILED_ENRICHMENT, reprocessed `times` before. */
+      async function failed(n: number, { retryable = true, times = 0 } = {}) {
+        const order = await repository.insert(Order.receive(props(n)));
+        const revision = order.revision;
+        for (let run = 0; run <= times; run++) {
+          order.startEnrichment();
+          order.failEnrichment(FailureReason.PROVIDER_UNAVAILABLE, {
+            retryable: run < times ? true : retryable,
+          });
+          if (run < times) order.requeueForReprocess({ maxReprocessCount: 10 });
+        }
+        await repository.update(order, revision);
+        return order.id!;
+      }
+
+      it('returns retryable failures still under the reprocess limit, oldest first', async () => {
+        const oldest = await failed(1);
+        await failed(2, { retryable: false });
+        await failed(3, { times: 3 }); // reached a limit of 3
+        const reprocessedOnce = await failed(4, { times: 1 });
+        await repository.insert(Order.receive(props(5))); // RECEIVED
+
+        const found = await repository.findRetryableFailures({
+          limit: 10,
+          maxReprocessCount: 3,
+        });
+
+        expect(found.map((o) => o.id)).toEqual([oldest, reprocessedOnce]);
+      });
+
+      it('honors the limit', async () => {
+        const oldest = await failed(1);
+        await failed(2);
+
+        const found = await repository.findRetryableFailures({
+          limit: 1,
+          maxReprocessCount: 3,
+        });
+
+        expect(found.map((o) => o.id)).toEqual([oldest]);
+      });
+    });
+
     describe('optimistic lock on revision', () => {
       it('saves when the stored revision is the expected one', async () => {
         const order = await repository.insert(Order.receive(props(1)));
