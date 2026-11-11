@@ -1,0 +1,45 @@
+services:
+  app:
+    build: .
+    env_file: .env
+    environment:
+      MONGO_URI: mongodb://mongo:27017/orders
+      REDIS_HOST: redis
+    ports:
+      - '${PORT:-3000}:${PORT:-3000}'
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    profiles: ['app']
+
+  mongo:
+    image: mongo:8.0
+    ports:
+      - '27017:27017'
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', 'db.adminCommand("ping").ok']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7.4-alpine
+    # BullMQ requires noeviction: an evicted key would silently lose jobs.
+    command: ['redis-server', '--appendonly', 'yes', '--maxmemory-policy', 'noeviction']
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mongo-data:
+  redis-data:
