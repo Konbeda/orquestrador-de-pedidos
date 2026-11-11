@@ -76,7 +76,10 @@ antes do insert terminar) e enfileiraria requisições que o índice único aind
 
 Defesas, da mais rápida para a mais lenta:
 1. **Retry interno curto** do enqueue dentro da requisição (`ENQUEUE_RETRY_DELAYS_MS`, padrão 100/200/400 ms):
-   cobre piscadas do Redis sem o cliente perceber.
+   cobre piscadas do Redis sem o cliente perceber. Antes de cada tentativa consulta `isAvailable()`: com a conexão
+   sabidamente caída, desiste na hora em vez de dormir 700 ms à toa. As esperas só valem enquanto a fila parece de pé
+   (Redis travado, comandos expirando). Custo aceito: uma queda curtíssima durante a requisição não é aproveitada;
+   o pedido fica com a varredura (ou o retry do cliente).
 2. **202 mesmo assim:** esgotadas as tentativas, o pedido já está salvo, então a resposta continua 202
    (`pendingEnqueue: true` vira log de warning). O 202 promete "recebi e vou processar", e a promessa vale por causa
    da varredura. Uma DLQ não serviria aqui: ela também mora no Redis, que é justamente o que caiu.

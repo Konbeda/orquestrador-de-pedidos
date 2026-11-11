@@ -33,6 +33,8 @@ describe('ReceiveOrder', () => {
   let queue: FakeEnrichmentQueue;
   /** Delays the use case waited for, recorded instead of really sleeping. */
   let sleeps: number[];
+  /** Runs while the use case "sleeps": lets a test change the world between attempts. */
+  let onSleep: (() => void) | undefined;
 
   const useCase = (settings: Partial<ReceiveOrderSettings> = {}) =>
     new ReceiveOrder(
@@ -47,6 +49,7 @@ describe('ReceiveOrder', () => {
       },
       async (ms) => {
         sleeps.push(ms);
+        onSleep?.();
       },
     );
 
@@ -75,6 +78,7 @@ describe('ReceiveOrder', () => {
     repository = new InMemoryOrderRepository();
     queue = new FakeEnrichmentQueue();
     sleeps = [];
+    onSleep = undefined;
   });
 
   describe('a new order', () => {
@@ -269,6 +273,38 @@ describe('ReceiveOrder', () => {
       expect(result.outcome).toBe('updated');
       expect(result.pendingEnqueue).toBe(true);
       expect(repository.all()[0]!.status).toBe(OrderStatus.RECEIVED);
+    });
+
+    it('does not wait nor try when the queue is already known to be down', async () => {
+      queue.goOffline();
+
+      const result = await useCase().execute(command());
+
+      expect(result.outcome).toBe('created');
+      expect(result.pendingEnqueue).toBe(true);
+      expect(result.enqueueError).toBeInstanceOf(Error);
+      expect(queue.attempts).toBe(0);
+      expect(sleeps).toEqual([]);
+    });
+
+    it('stops waiting as soon as the queue becomes known to be down between attempts', async () => {
+      queue.failNext(Infinity);
+      onSleep = () => queue.goOffline();
+
+      const result = await useCase().execute(command());
+
+      expect(result.pendingEnqueue).toBe(true);
+      expect(queue.attempts).toBe(1);
+      expect(sleeps).toEqual([100]);
+    });
+
+    it('keeps retrying with waits while the queue still looks up (e.g. a frozen Redis timing out)', async () => {
+      queue.failNext(Infinity);
+
+      await useCase().execute(command());
+
+      expect(queue.attempts).toBe(4);
+      expect(sleeps).toEqual([100, 200, 400]);
     });
 
     it('does not retry when no enqueue was needed', async () => {

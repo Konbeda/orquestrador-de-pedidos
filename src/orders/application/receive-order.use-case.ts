@@ -166,6 +166,10 @@ export class ReceiveOrder {
   /**
    * Runs after the order is stored, so a queue failure must not fail the request:
    * retries a few times, then reports the enqueue as pending (sweeper takes over).
+   *
+   * Waiting only helps while the queue still looks up (a frozen Redis timing out).
+   * Once the client knows the connection is down, the client would just sleep:
+   * give up at once and leave the order to the sweeper.
    */
   private async enqueue(
     order: Order,
@@ -177,12 +181,17 @@ export class ReceiveOrder {
       requestId,
     };
     const delays = this.settings.enqueueRetryDelaysMs;
+    let lastError: unknown = new Error('Enrichment queue is unavailable');
 
     for (let attempt = 0; ; attempt++) {
+      if (!this.queue.isAvailable()) {
+        return { pendingEnqueue: true, enqueueError: lastError };
+      }
       try {
         await this.queue.enqueue(job);
         return NOTHING_PENDING;
       } catch (error) {
+        lastError = error;
         if (attempt >= delays.length)
           return { pendingEnqueue: true, enqueueError: error };
         await this.wait(delays[attempt]!);
