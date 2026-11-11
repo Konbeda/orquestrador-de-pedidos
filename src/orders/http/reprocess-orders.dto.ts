@@ -1,3 +1,4 @@
+import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -11,6 +12,12 @@ import {
 
 export class ReprocessOrdersDto {
   /** Specific orders (ids from GET /orders). Without it: every retryable failure, oldest first. */
+  @ApiPropertyOptional({
+    type: [String],
+    maxItems: 100,
+    description:
+      'Ids from GET /orders; omit to reprocess every retryable failure, oldest first',
+  })
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(100)
@@ -21,6 +28,12 @@ export class ReprocessOrdersDto {
   order_ids?: string[];
 
   /** Batch size when no ids are given. */
+  @ApiPropertyOptional({
+    minimum: 1,
+    maximum: 500,
+    default: 100,
+    description: 'Batch size without order_ids',
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()

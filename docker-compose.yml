@@ -3,6 +3,8 @@ services:
     build: .
     env_file: .env
     environment:
+      # The image has no dev dependencies (pino-pretty): production, whatever .env says.
+      NODE_ENV: production
       MONGO_URI: mongodb://mongo:27017/orders
       REDIS_HOST: redis
     ports:

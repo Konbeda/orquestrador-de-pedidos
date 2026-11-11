@@ -34,6 +34,8 @@ Cada item começa com o teste vermelho. Decisões e motivos em [DECISIONS.md](DE
       TTL com `collMod`, `GET /webhooks/rejections`
 - [x] `POST /orders/reprocess`: ids ou lote, recusas explicadas, `jobKey` nova, prioridade baixa na mesma fila;
       e2e: Frankfurter cai, pedido falha, volta, reprocesso enriquece
+- [x] Swagger em `/docs` com teste do contrato OpenAPI (status por rota, campos obrigatórios, sem dados pessoais)
+- [x] README; imagem Docker e compose validados com a Frankfurter real
 
 ## Casos de uso (unit, com fakes)
 
@@ -44,13 +46,11 @@ Cada item começa com o teste vermelho. Decisões e motivos em [DECISIONS.md](DE
 
 ## HTTP e worker
 
-- [ ] Swagger: `@ApiProperty` nos DTOs e respostas documentadas
 
 ## E2E
 
 
 ## Entrega
 
-- [ ] README (como rodar, decisões, melhorias futuras)
 - [ ] Limpar `AGENTS.md` do template
 - [ ] Publicar no GitHub

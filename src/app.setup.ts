@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Logger } from 'nestjs-pino';
 import type { Env } from './config/env.schema.js';
+import { setupSwagger } from './swagger.js';
 import {
   InvalidPayloadError,
   flattenValidationErrors,
@@ -37,4 +38,6 @@ export function configureApp(app: INestApplication): void {
 
   // Lets in-flight jobs and requests finish on SIGTERM (docker stop, k8s rollout).
   app.enableShutdownHooks();
+
+  setupSwagger(app);
 }

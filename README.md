@@ -1,132 +1,193 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Orquestrador de Pedidos
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+API em **NestJS** que recebe pedidos por **webhook**, garante **idempotência**, enfileira o processamento e
+**enriquece** cada pedido convertendo o total para BRL com a [Frankfurter](https://frankfurter.dev) (câmbio, sem
+chave de API). Falhas temporárias são **retentadas com backoff**; o que falha de vez vai para uma **DLQ** e o pedido
+termina em `FAILED_ENRICHMENT`.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+Solução do [desafio backend pleno](https://github.com/buzzmates/desafio-backend-pleno). As decisões de arquitetura,
+com o motivo de cada uma, estão em **[docs/DECISIONS.md](docs/DECISIONS.md)**.
 
-## Description
-
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
-
-## Project setup
-
-```bash
-$ pnpm install
+```mermaid
+flowchart LR
+    C[Cliente] -->|POST /webhooks/orders| API
+    API -->|1. grava RECEIVED| M[(MongoDB)]
+    API -->|2. enfileira| Q[[BullMQ / Redis]]
+    Q --> W[Worker]
+    W -->|câmbio| F[Frankfurter]
+    W -->|ENRICHED ou FAILED_ENRICHMENT| M
+    W -.falha final.-> DLQ[[DLQ]]
+    S[Varredura de órfãos] -.pedidos sem job.-> Q
 ```
 
-## Compile and run the project
+## Como rodar
+
+Requisito: **Docker** (com Docker Compose).
 
 ```bash
-# development
-$ pnpm run start
-
-# watch mode
-$ pnpm run start:dev
-
-# production mode
-$ pnpm run start:prod
+cp .env.example .env
 ```
-
-## Run tests
 
 ```bash
-# unit tests
-$ pnpm run test
-
-# e2e tests
-$ pnpm run test:e2e
-
-# test coverage
-$ pnpm run test:cov
+docker compose --profile app up --build
 ```
 
-## Deployment
+A API sobe em `http://localhost:3000` com MongoDB e Redis. **Swagger: <http://localhost:3000/docs>**.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+Envie um pedido:
 
 ```bash
-$ pnpm install -g @nestjs/mau
-$ mau deploy
+curl -i -X POST localhost:3000/webhooks/orders -H 'content-type: application/json' -d '{
+  "order_id": "ext-123",
+  "customer": { "email": "user@example.com", "name": "Ana" },
+  "items": [{ "sku": "ABC123", "qty": 2, "unit_price": 59.9 }],
+  "currency": "USD",
+  "idempotency_key": "5f0c1a2e-9a7b-4c1d-8e3f-1b2c3d4e5f60"
+}'
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Observability
-
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
-
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
-
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
-
-To add it to this project, run this and approve the code it prints at [observe.nestjs.com/link](https://observe.nestjs.com/link) - signing up for free if you have no account:
+Resposta `202` com o `id` do pedido. Em instantes ele está enriquecido:
 
 ```bash
-$ npx @nestjs/observe link
+curl localhost:3000/orders/<id>
 ```
 
-It installs `@nestjs/observe`, wires it into `AppModule` and `main.ts`, and writes the app key and secret into `.env`, which every `nest start` script (`start`, `start:dev`, `start:debug`) then loads. In production, set `OBSERVE_APP_KEY` and `OBSERVE_APP_SECRET` in the environment instead.
+```json
+{
+  "id": "6af45d4c4d4329bf2fd540b6", "order_id": "ext-123", "status": "ENRICHED",
+  "currency": "USD", "total": 119.8, "revision": 1,
+  "enrichment": { "target_currency": "BRL", "rate": 5.5517, "rate_date": "2026-11-10", "converted_total": 665.09 },
+  "failure": null
+}
+```
 
-Or do it by hand:
+Reenviar o mesmo corpo responde `200` com o mesmo pedido (idempotência).
+
+### Desenvolvimento local
+
+Node 24 e pnpm 10.
 
 ```bash
-$ pnpm install @nestjs/observe
+pnpm install
 ```
 
-Then follow the [setup guide](https://docs.nestjs.com/observability/sdk) - it takes a single import and an app key.
+```bash
+pnpm infra:up
+```
 
-The free plan needs no payment details and covers 300,000 events a month. You can also browse the [live demo](https://www.observe-demo.nestjs.com/dashboard) first - the whole dashboard over a busy service's data, with nothing to install.
+```bash
+pnpm start:dev
+```
 
-## Resources
+`pnpm infra:up` sobe só o MongoDB e o Redis do compose; a app roda na máquina com hot reload.
 
-Check out a few resources that may come in handy when working with NestJS:
+## Endpoints
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observe](https://observe.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+| Método e rota | O que faz |
+|---|---|
+| `POST /webhooks/orders` | Recebe o pedido. **202** criado/atualizado, **200** duplicado (mesma `idempotency_key`), **400** payload inválido, **409** conflito, **413** corpo grande demais, **422** chave reaproveitada para outro pedido |
+| `GET /orders?status=&order_id=&limit=&cursor=` | Lista, mais recentes primeiro, paginada por cursor (`next_cursor`) |
+| `GET /orders/:id` | Detalhes de um pedido |
+| `GET /queue/metrics` | Jobs por estado, pausa do circuit breaker e total na DLQ |
+| `POST /orders/reprocess` | Reenvia pedidos `FAILED_ENRICHMENT` (por ids ou em lote), com prioridade baixa |
+| `GET /webhooks/rejections?request_id=` | Auditoria dos webhooks recusados (dados pessoais mascarados) |
+| `GET /health` | `ok` / `degraded` (200) ou `down` (503) |
 
-## Support
+Todos os erros têm o mesmo formato, com um `code` estável e o `request_id` (também no header `x-request-id`):
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+```json
+{ "statusCode": 400, "code": "INVALID_PAYLOAD", "message": "The payload is invalid",
+  "request_id": "req_6346e2db-...", "errors": [{ "field": "items.0.qty", "message": "qty must be a positive number" }] }
+```
 
-## Stay in touch
+Status do pedido: `RECEIVED → ENRICHING → ENRICHED`, ou `FAILED_ENRICHMENT` com `failure.reason`
+(`UNSUPPORTED_CURRENCY`, `PROVIDER_UNAVAILABLE`, `PROVIDER_REJECTED`, `INTERNAL_ERROR`) e `failure.retryable`.
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+## Decisões principais
 
-## License
+Resumo; o raciocínio completo está em [docs/DECISIONS.md](docs/DECISIONS.md).
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+- **Stack:** NestJS 12 · MongoDB (Mongoose) · BullMQ (Redis) · Vitest + Testcontainers. BullMQ porque o problema é
+  uma fila de jobs dentro de um serviço (retry com backoff, dedup por `jobId` e métricas nativos); RabbitMQ faria
+  sentido entre serviços e Kafka seria exagero.
+- **Idempotência em três camadas:** índice único no MongoDB (fonte da verdade, inclusive sob requisições
+  simultâneas), dedup por `jobId` na fila e o worker ignorando pedidos já finalizados. Requisições que perdem uma
+  corrida são reavaliadas e respondem como duplicadas.
+- **Banco antes da fila, e o Redis fora não derruba o recebimento:** o pedido é gravado primeiro; se o enqueue
+  falhar (com retry curto e falha rápida medida), a resposta continua 202 e uma **varredura de órfãos** enfileira
+  depois.
+- **Retry, DLQ e circuit breaker:** erro temporário tenta de novo com backoff exponencial; erro permanente (4xx) ou
+  tentativas esgotadas → `FAILED_ENRICHMENT` + cópia na DLQ. Com a Frankfurter fora, o circuito abre e **pausa a
+  fila sem gastar tentativas**.
+- **Moeda não suportada** é detectada no recebimento: 202, `FAILED_ENRICHMENT`, sem ocupar a fila.
+- **Reprocessamento** pela mesma fila com prioridade baixa: pedidos novos sempre passam na frente.
+- **LGPD:** respostas e logs nunca têm e-mail/nome; a auditoria dos 400 guarda só campos do contrato, mascarados,
+  com expurgo automático (TTL).
+- **`ORDER_DUPLICATE_POLICY`:** `reject` (padrão, 409) ou `update` para o mesmo `order_id` com outra chave.
+- **`WORKER_ENABLED`:** a mesma imagem roda como API + worker ou só API, para escalar separadamente.
+
+## Arquitetura
+
+Ports & adapters: os casos de uso não conhecem Nest, MongoDB nem BullMQ.
+
+```
+src/
+├── orders/
+│   ├── domain/         Order (máquina de status, dinheiro em centavos) — puro
+│   ├── application/    casos de uso + ports (classes abstratas)
+│   ├── infra/          MongoDB, BullMQ (produtor, worker, varredura), Frankfurter + circuit breaker
+│   └── http/           controllers, DTOs, apresentação
+├── rejections/         auditoria dos webhooks recusados
+├── health/             /health com três estados
+└── shared/             circuit breaker, tarefa periódica, formato de erro, request id
+```
+
+## Testes
+
+TDD do começo ao fim. Três suítes:
+
+| Suíte | O que cobre | Comando |
+|---|---|---|
+| Unit | Domínio e casos de uso com fakes em memória (inclusive corridas e Redis fora simulados) | `pnpm test` |
+| Integração | Adapters contra MongoDB e Redis **reais** (Testcontainers) e a Frankfurter mockada | `pnpm test:int` |
+| E2E | A app inteira por HTTP: webhook → fila → worker → pedido, DLQ, circuito, varredura, auditoria | `pnpm test:e2e` |
+
+Integração e e2e sobem os containers sozinhos (só precisam do Docker rodando).
+
+- **Teste de contrato:** a mesma suíte do repositório roda contra o fake e contra o MongoDB real, provando que o fake
+  usado pelos testes de casos de uso se comporta como o banco.
+- **Comportamentos de infraestrutura medidos, não assumidos:** o enqueue com o Redis parado/travado, o rate limit do
+  BullMQ não gastando tentativas, a prioridade da fila e as respostas reais da Frankfurter foram conferidos e viraram
+  testes.
+- **Mutantes:** cada regra importante foi quebrada de propósito para confirmar que algum teste falha. Isso revelou
+  testes fracos, que foram reforçados.
+- **O que os testes pegaram:** uma corrida real entre duas requisições idênticas (encontrada pelo e2e de 10
+  requisições simultâneas), o BullMQ pendurando com o Redis fora, `jobId` inválido para chaves com `:` e outros —
+  todos documentados em [docs/DECISIONS.md](docs/DECISIONS.md).
+
+## Configuração
+
+Todas as variáveis estão comentadas em [`.env.example`](.env.example) e são validadas no boot (a app não sobe com
+configuração inválida). As principais:
+
+| Variável | Padrão | |
+|---|---|---|
+| `ENRICHMENT_TARGET_CURRENCY` | `BRL` | Moeda de destino da conversão |
+| `ENRICHMENT_MAX_ATTEMPTS` / `ENRICHMENT_BACKOFF_MS` | `5` / `1000` | Tentativas e base do backoff exponencial |
+| `CIRCUIT_FAILURE_THRESHOLD` / `CIRCUIT_RESET_TIMEOUT_MS` | `5` / `30000` | Circuit breaker da Frankfurter |
+| `ORDER_DUPLICATE_POLICY` / `MAX_ORDER_REVISIONS` | `reject` / `10` | Mesmo `order_id` com outra chave |
+| `STALE_ORDER_AFTER_MS` / `SWEEP_INTERVAL_MS` | `120000` / `60000` | Varredura de órfãos |
+| `REPROCESS_MAX_COUNT` | `3` | Máximo de reprocessos por pedido |
+| `REJECTION_RETENTION_DAYS` | `90` | Retenção da auditoria (LGPD) |
+| `WORKER_ENABLED` | `true` | `false` = processo só de API |
+
+## Melhorias futuras
+
+Ficaram fora do escopo de propósito; o porquê de cada uma está em [docs/DECISIONS.md](docs/DECISIONS.md).
+
+- **Autenticação do webhook com assinatura HMAC** e rate limit (hoje quem conhece a URL envia pedidos).
+- **Outbox transacional** para a consistência banco ↔ fila em segundos (hoje a varredura cobre em minutos).
+- **Varredura de pedidos presos em `ENRICHING`** (caso raro: o banco cai justamente ao gravar a falha).
+- **Reprocessamento automático** quando o circuito fecha (hoje é manual).
+- **Circuit breaker compartilhado** entre instâncias (hoje cada processo tem o seu).
+- Exportação da auditoria em tempo real (Change Streams) para uma ferramenta de observabilidade.

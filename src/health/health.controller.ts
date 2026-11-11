@@ -1,5 +1,6 @@
 import { Controller, Get, Res } from '@nestjs/common';
 import { InjectConnection } from '@nestjs/mongoose';
+import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import type { Connection } from 'mongoose';
 import { EnrichmentQueue } from '../orders/application/ports/enrichment.queue.js';
@@ -14,6 +15,7 @@ const MONGO_PING_TIMEOUT_MS = 1000;
  * Only Mongo is pinged; Redis and Frankfurter report the state their clients
  * already know, so polling /health never adds load to the external API.
  */
+@ApiTags('health')
 @Controller('health')
 export class HealthController {
   constructor(
@@ -24,6 +26,18 @@ export class HealthController {
   ) {}
 
   @Get()
+  @ApiOperation({
+    summary:
+      'ok | degraded (Redis or Frankfurter out: orders still accepted) | down',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'ok or degraded: keep the instance in the load balancer',
+  })
+  @ApiResponse({
+    status: 503,
+    description: 'down: Mongo unreachable, orders cannot be stored',
+  })
   async check(
     @Res({ passthrough: true }) res: Response,
   ): Promise<HealthReport['body']> {

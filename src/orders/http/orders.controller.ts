@@ -9,7 +9,15 @@ import {
   Query,
   Req,
 } from '@nestjs/common';
+import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
+import { ErrorResponse } from '../../shared/http/error-response.js';
+import {
+  OrderPage as OrderPageModel,
+  OrderResponse as OrderResponseModel,
+  QueueMetrics,
+  ReprocessResult,
+} from './api-models.js';
 import { ReprocessOrders } from '../application/reprocess-orders.use-case.js';
 import { requestIdOf } from '../../shared/http/request-id.js';
 import { ReprocessOrdersDto } from './reprocess-orders.dto.js';
@@ -32,6 +40,7 @@ export interface OrderPage {
  * Read side. No use case in between: a read has no business rule to protect,
  * so the controller goes straight to the repository port.
  */
+@ApiTags('orders')
 @Controller()
 export class OrdersController {
   constructor(
@@ -42,6 +51,15 @@ export class OrdersController {
 
   /** 202: the orders go back to the queue; GET /orders/:id follows them. */
   @Post('orders/reprocess')
+  @ApiOperation({
+    summary: 'Send FAILED_ENRICHMENT orders back for enrichment (low priority)',
+  })
+  @ApiResponse({ status: 202, type: ReprocessResult })
+  @ApiResponse({
+    status: 400,
+    type: ErrorResponse,
+    description: 'INVALID_PAYLOAD',
+  })
   @HttpCode(HttpStatus.ACCEPTED)
   async reprocess(@Body() body: ReprocessOrdersDto, @Req() req: Request) {
     const result = await this.reprocessOrders.execute({
@@ -59,6 +77,13 @@ export class OrdersController {
   }
 
   @Get('orders')
+  @ApiOperation({ summary: 'List orders, newest first, cursor paginated' })
+  @ApiResponse({ status: 200, type: OrderPageModel })
+  @ApiResponse({
+    status: 400,
+    type: ErrorResponse,
+    description: 'INVALID_PAYLOAD (bad status, limit or cursor)',
+  })
   async list(@Query() query: ListOrdersQuery): Promise<OrderPage> {
     // One extra row tells whether another page exists without a count query.
     const rows = await this.orders.list({
@@ -75,13 +100,30 @@ export class OrdersController {
   }
 
   @Get('orders/:id')
+  @ApiOperation({ summary: 'One order by internal id' })
+  @ApiResponse({ status: 200, type: OrderResponseModel })
+  @ApiResponse({
+    status: 404,
+    type: ErrorResponse,
+    description: 'ORDER_NOT_FOUND',
+  })
   async findOne(@Param('id') id: string): Promise<OrderResponse> {
     const order = await this.orders.findById(id);
     if (!order) throw new OrderNotFoundError(id);
     return presentOrder(order);
   }
 
+  @ApiTags('queue')
   @Get('queue/metrics')
+  @ApiOperation({
+    summary: 'Enrichment queue: jobs per state, circuit pause, dead letters',
+  })
+  @ApiResponse({ status: 200, type: QueueMetrics })
+  @ApiResponse({
+    status: 503,
+    type: ErrorResponse,
+    description: 'QUEUE_UNAVAILABLE (Redis down)',
+  })
   metrics(): Promise<EnrichmentQueueMetrics> {
     return this.queue.metrics();
   }
