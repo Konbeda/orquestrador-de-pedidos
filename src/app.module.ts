@@ -6,6 +6,7 @@ import { LoggerModule } from 'nestjs-pino';
 import { validateEnv, type Env } from './config/env.schema.js';
 import { HealthModule } from './health/health.module.js';
 import { OrdersModule } from './orders/orders.module.js';
+import { RejectionsModule } from './rejections/rejections.module.js';
 import { assignRequestId } from './shared/http/request-id.js';
 
 /**
@@ -64,6 +65,7 @@ export class AppModule {
 
         OrdersModule,
         HealthModule,
+        RejectionsModule,
       ],
     };
   }

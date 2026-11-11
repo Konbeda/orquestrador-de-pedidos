@@ -30,26 +30,24 @@ Cada item começa com o teste vermelho. Decisões e motivos em [DECISIONS.md](DE
 - [x] `GET /health` com 3 estados (só Mongo derruba), hint de `FRANKFURTER_BASE_URL`, healthcheck no compose
 - [x] `GET /orders` (cursor, filtros, contrato no fake e no Mongo), `GET /orders/:id`, `GET /queue/metrics`
       (contagens, pausa do circuito, DLQ; 503 rápido com Redis fora)
+- [x] Auditoria em `webhook_rejections`: allowlist + máscara, nomes de campos desconhecidos, hash dos bytes brutos,
+      TTL com `collMod`, `GET /webhooks/rejections`
 
 ## Casos de uso (unit, com fakes)
 
 - [ ] Varredura de `ENRICHING` parados (fecha a lacuna de quando nem a falha consegue ser gravada)
 - [ ] `ReprocessOrders`: só `retryable`, respeita o limite, fila de reprocesso separada, `jobId` novo
-- [ ] `maskPII()` e montagem do registro de rejeição (`error_codes`, `payload_hash`)
 
 ## Adapters (integration, Mongo/Redis reais)
 
-- [ ] `webhook_rejections`: índices (request_id unique, source+received_at, TTL)
 
 ## HTTP e worker
 
-- [ ] Auditoria dos 400 em `webhook_rejections` (mascarado, `payload_hash`, `error_codes`, TTL)
 - [ ] Swagger: `@ApiProperty` nos DTOs e respostas documentadas
-- [ ] `POST /orders/reprocess`, `GET /webhooks/rejections`
+- [ ] `POST /orders/reprocess`
 
 ## E2E
 
-- [ ] Payload inválido → 400 + registro mascarado
 
 ## Entrega
 

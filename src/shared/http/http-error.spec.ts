@@ -138,9 +138,21 @@ describe('flattenValidationErrors', () => {
     ];
 
     expect(flattenValidationErrors(tree)).toEqual([
-      { field: 'currency', message: 'currency must be ISO 4217' },
-      { field: 'items.0.qty', message: 'qty must be positive' },
-      { field: 'customer.email', message: 'email must be an email' },
+      {
+        field: 'currency',
+        message: 'currency must be ISO 4217',
+        constraint: 'isISO4217',
+      },
+      {
+        field: 'items.0.qty',
+        message: 'qty must be positive',
+        constraint: 'isPositive',
+      },
+      {
+        field: 'customer.email',
+        message: 'email must be an email',
+        constraint: 'isEmail',
+      },
     ]);
   });
 

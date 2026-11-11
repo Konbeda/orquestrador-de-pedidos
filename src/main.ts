@@ -9,6 +9,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule.register(), {
     bufferLogs: true,
     bodyParser: false, // configureApp registers it with BODY_LIMIT
+    rawBody: true, // exact bytes for the audit hash of rejected webhooks
   });
   configureApp(app);
 

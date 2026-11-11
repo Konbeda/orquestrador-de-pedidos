@@ -33,6 +33,7 @@ export async function createTestApp(
   // Same setup as main.ts: body limit, validation, error format.
   const app = moduleRef.createNestApplication({
     bodyParser: false,
+    rawBody: true,
     bufferLogs: true,
   });
   configureApp(app);

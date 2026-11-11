@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Logger } from 'nestjs-pino';
 import type { Env } from './config/env.schema.js';
-import { AllExceptionsFilter } from './shared/http/all-exceptions.filter.js';
 import {
   InvalidPayloadError,
   flattenValidationErrors,
@@ -12,7 +11,8 @@ import {
 /**
  * Everything the running app and the e2e tests must share. Kept out of main.ts
  * so tests exercise the same body limit, validation and error format as production.
- * The app must be created with `bodyParser: false`.
+ * The app must be created with `bodyParser: false` and `rawBody: true`
+ * (exact bytes kept in req.rawBody for the audit hash, even when the JSON fails to parse).
  */
 export function configureApp(app: INestApplication): void {
   const express = app as NestExpressApplication;
@@ -33,7 +33,7 @@ export function configureApp(app: INestApplication): void {
         new InvalidPayloadError(flattenValidationErrors(errors)),
     }),
   );
-  app.useGlobalFilters(new AllExceptionsFilter());
+  // The error filter is registered with APP_FILTER (RejectionsModule): it needs DI for the audit.
 
   // Lets in-flight jobs and requests finish on SIGTERM (docker stop, k8s rollout).
   app.enableShutdownHooks();

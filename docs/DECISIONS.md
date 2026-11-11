@@ -122,12 +122,34 @@ Moedas suportadas: endpoint `/currencies` da Frankfurter com cache (TTL), fallba
 
 ## Auditoria de rejeições (LGPD)
 
-Coleção `webhook_rejections`, separada de `orders`: `request_id`, `received_at`, `source`, `errors`,
-`error_codes` normalizados, payload **com e-mail e nome mascarados**, `payload_hash` (SHA-256 do original).
+Coleção `webhook_rejections`, separada de `orders`. Cada violação de contrato no `POST /webhooks/orders`
+(400 de payload, JSON malformado, 413) vira um registro com: `request_id`, `received_at`, `source` (IP; o webhook
+ainda não tem autenticação), `user_agent`, `kind`, `errors` (os mesmos devolvidos ao cliente), `error_codes`,
+`payload`, `unknown_fields`, `payload_hash`, `payload_size`.
 
-- Base legal: exercício regular de direitos / legítimo interesse; minimização: dado pessoal mascarado.
-- Retenção: índice TTL em `received_at` (`REJECTION_RETENTION_DAYS`, padrão 90).
-- Logs da aplicação também nunca têm e-mail/nome completos (`redact` do pino + `maskPII()`).
+- **Allowlist, não "payload inteiro mascarado":** só os campos do contrato são guardados (e-mail `u***@dominio`,
+  nome `A*** S***`); dos campos desconhecidos guarda **só o nome** (`notes`, `customer.phone`), nunca o valor, porque
+  dado pessoal pode chegar em qualquer campo que não conhecemos. Valores com tipo errado nos campos do contrato
+  ficam (muitas vezes são o motivo do 400), exceto sob `customer`, que vira `[redacted: <tipo>]`.
+- **JSON malformado:** não dá para mascarar o que não dá para interpretar: `payload: null`, só hash e tamanho.
+- **413:** o corpo nem foi lido: só o tamanho declarado (`content-length`).
+- **`payload_hash` = SHA-256 dos bytes exatos recebidos** (`rawBody: true` do Nest, preenchido mesmo quando o JSON
+  falha), não do JSON reinterpretado: prova o conteúdo enviado sem guardá-lo.
+- **`error_codes`** = `campo:regra` sem índice de item (`items.qty:isPositive`, `body:malformedJson`), para agrupar.
+  A regra (`constraint`) é interna: a resposta ao cliente continua só com `field` e `message`.
+- **Só contrato é auditado:** 409/422 são regras de negócio sobre pedidos válidos; outras rotas não entram.
+- **Melhor esforço:** falha ao gravar a auditoria vira log de warning e nunca muda a resposta ao cliente.
+- **`request_id` não é único:** pode vir do cliente (`x-request-id`) e repetir; com unique, a segunda auditoria seria
+  descartada em silêncio. A consulta por `request_id` devolve lista.
+- **Retenção:** índice TTL em `received_at` (`REJECTION_RETENTION_DAYS`, padrão 90). Mudar a retenção ajusta o
+  índice existente com `collMod` (o Mongo recusa recriá-lo com outro TTL). O expurgo em si é do Mongo (monitor de
+  TTL a cada ~60 s), não testado.
+- **Consulta:** `GET /webhooks/rejections?request_id=` ou `?source=&from=&to=&limit=` (período `[from, to)`,
+  padrão últimas 24 h, até 200). Sem nenhum dos dois → 400: uma consulta sem filtro varreria a coleção.
+- O filtro de erros global é registrado com `APP_FILTER` (no `RejectionsModule`), e não com `useGlobalFilters`,
+  porque precisa de injeção de dependência para gravar a auditoria.
+- Base legal: exercício regular de direitos / legítimo interesse; minimização pela allowlist e pela retenção.
+- Logs da aplicação também nunca têm e-mail/nome completos (`redact` do pino).
 - `request_id` em todas as requisições (header `x-request-id`, reaproveitado se o cliente mandar),
   propagado para logs e dados do job.
 
@@ -139,7 +161,7 @@ Coleção `webhook_rejections`, separada de `orders`: `request_id`, `received_at
 | `orders` | `order_id` unique | Mesmo pedido com outra chave |
 | `orders` | `{ status, queue_checked_at }` | Varredura de órfãos (o índice já entrega a ordem do `sort`) |
 | `orders` | `{ status, failure.retryable, created_at: -1 }` | `GET /orders?status=` e varredura de reprocessamento |
-| `webhook_rejections` | `request_id` unique | Consulta pontual do suporte |
+| `webhook_rejections` | `request_id` (não único: pode vir do cliente) | Consulta pontual do suporte |
 | `webhook_rejections` | `{ source, received_at }` | "Rejeições do cliente X no período" |
 | `webhook_rejections` | `received_at` TTL | Exportação por período + expurgo automático |
 

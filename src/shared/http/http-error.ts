@@ -16,6 +16,8 @@ import { QueueUnavailableError } from '../../orders/infra/queue/bullmq-enrichmen
 export interface FieldError {
   field: string;
   message: string;
+  /** Rule that failed (isPositive, isEmail...): internal, feeds the audit error codes. */
+  constraint?: string;
 }
 
 /** Thrown by the ValidationPipe: the payload broke the contract. */
@@ -106,10 +108,9 @@ export function flattenValidationErrors(
 ): FieldError[] {
   return errors.flatMap((error) => {
     const field = parent ? `${parent}.${error.property}` : error.property;
-    const own = Object.values(error.constraints ?? {}).map((message) => ({
-      field,
-      message,
-    }));
+    const own = Object.entries(error.constraints ?? {}).map(
+      ([constraint, message]) => ({ field, message, constraint }),
+    );
     return [...own, ...flattenValidationErrors(error.children ?? [], field)];
   });
 }
