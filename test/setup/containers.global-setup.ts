@@ -34,7 +34,7 @@ let redis: StartedRedisContainer;
  */
 export async function setup(project: TestProject) {
   [mongo, redis] = await Promise.all([
-    new GenericContainer('mongo:8.0')
+    new GenericContainer('mongo:8.2')
       .withExposedPorts(MONGO_PORT)
       .withWaitStrategy(Wait.forLogMessage(/Waiting for connections/))
       .withStartupTimeout(120_000)
