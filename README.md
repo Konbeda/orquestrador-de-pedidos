@@ -1,5 +1,7 @@
 # Orquestrador de Pedidos
 
+[![CI](https://github.com/Konbeda/orquestrador-de-pedidos/actions/workflows/ci.yml/badge.svg)](https://github.com/Konbeda/orquestrador-de-pedidos/actions/workflows/ci.yml)
+
 API em **NestJS** que recebe pedidos por **webhook**, garante **idempotência**, enfileira o processamento e
 **enriquece** cada pedido convertendo o total para BRL com a [Frankfurter](https://frankfurter.dev) (câmbio, sem
 chave de API). Falhas temporárias são **retentadas com backoff**; o que falha de vez vai para uma **DLQ** e o pedido

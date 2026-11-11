@@ -8,7 +8,8 @@ Serve de base para o README final.
 | Peça | Escolha | Por quê |
 |---|---|---|
 | Framework | NestJS 12 (ESM) | Exigência do desafio |
-| Banco | MongoDB + Mongoose | Pedido é um documento com itens aninhados; uma coleção principal, sem relações |
+| Banco | MongoDB + Mongoose | Pedido é um documento com itens aninhados; uma coleção principal, sem relações | 
+| Versão do MongoDB | 8.2 (não 8.0) | O 8.0 se recusa a iniciar em kernel Linux 6.19+ (SERVER-121912): descoberto no CI, cujo runner já roda kernel 7.0; também afetaria quem rodar o compose num Linux atualizado |
 | Fila | BullMQ (Redis) | Fila de jobs dentro de um serviço: retry com backoff, dedup por `jobId` e métricas nativos |
 | Serviço externo | Frankfurter (`api.frankfurter.dev/v1`) | Câmbio, gratuito, sem chave. Converte o total para `ENRICHMENT_TARGET_CURRENCY` |
 | Validação HTTP | class-validator | Integração direta com o `ValidationPipe` e `@IsISO4217CurrencyCode()` |
