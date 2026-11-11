@@ -21,6 +21,8 @@ export const envSchema = z.object({
   MONGO_URI: z.string().min(1),
   REDIS_HOST: z.string().min(1),
   REDIS_PORT: z.coerce.number().int().min(1).max(65535).default(6379),
+  // A Redis that does not answer within this time fails the command (frozen Redis).
+  REDIS_COMMAND_TIMEOUT_MS: positiveInt.default(500),
 
   FRANKFURTER_BASE_URL: z.url().default('https://api.frankfurter.dev/v1'),
   FRANKFURTER_TIMEOUT_MS: positiveInt.default(3000),

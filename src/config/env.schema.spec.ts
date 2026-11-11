@@ -22,6 +22,7 @@ describe('validateEnv', () => {
       SWEEP_INTERVAL_MS: 60_000,
       STALE_ORDER_AFTER_MS: 120_000,
       SWEEP_BATCH_SIZE: 100,
+      REDIS_COMMAND_TIMEOUT_MS: 500,
     });
   });
 

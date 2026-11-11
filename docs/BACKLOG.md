@@ -11,6 +11,8 @@ Cada item começa com o teste vermelho. Decisões e motivos em [DECISIONS.md](DE
 - [x] `ReceiveOrder`: criado / duplicado / update, moeda não suportada, corridas, lock otimista
 - [x] `ReceiveOrder`: retry interno do enqueue e 202 com `pendingEnqueue` quando o Redis está fora
 - [x] `EnqueueStaleOrders` (varredura de órfãos): carimbo `queue_checked_at`, lotes, para na falha, proteção contra loop
+- [x] Varredura pula a execução quando `isAvailable()` diz que a fila caiu
+- [x] `BullMqEnrichmentQueue` (produtor): falha rápida medida (parado, travado, boot sem Redis), dedup, `jobId` codificado
 
 ## Casos de uso (unit, com fakes)
 
@@ -28,7 +30,9 @@ Cada item começa com o teste vermelho. Decisões e motivos em [DECISIONS.md](DE
       lock otimista por `revision`, 10 inserts simultâneos = 1 pedido,
       `queue_checked_at` + `findStaleReceived` / `markQueueChecked`
 - [ ] Contrato compartilhado: a mesma suíte roda contra o fake e o Mongo, provando que o fake não mente
-- [ ] `BullMqEnrichmentQueue`: dedup por `jobId`, retry com backoff, DLQ
+- [ ] Worker BullMQ: retry com backoff, DLQ, `RateLimitError` com circuito aberto
+- [ ] `ReceiveOrder`: pular as esperas do retry interno quando `isAvailable()` já diz que o Redis caiu
+      (hoje cada tentativa falha em ~1 ms, mas ainda dorme 100 + 200 + 400 ms)
 - [ ] `FrankfurterClient` (nock): sucesso, timeout, 4xx, 5xx, `/currencies`
 - [ ] `webhook_rejections`: índices (request_id unique, source+received_at, TTL)
 

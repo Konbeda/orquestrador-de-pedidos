@@ -149,6 +149,34 @@ Sem índice em `errors`/`error_codes` por enquanto: coleção é muito mais escr
 - Erro **permanente** (4xx, moeda rejeitada): `UnrecoverableError`, direto para a DLQ.
 - Tentativas esgotadas: job copiado para `orders-enrichment-dlq`, status `FAILED_ENRICHMENT`.
 
+## Produtor da fila: falhar rápido
+
+Medido com Redis real (BullMQ 6 + ioredis 6), tempo de um `queue.add`:
+
+| Cenário | Configuração padrão | Nosso adapter |
+|---|---|---|
+| Redis de pé | 4 ms | 1 ms |
+| Redis travado (pausado: TCP aberto, sem resposta) | pendurado (> 15 s) | ~0,5 s (`REDIS_COMMAND_TIMEOUT_MS`) |
+| Redis parado | pendurado (> 15 s) | ~1 ms |
+| App subiu antes do Redis | pendurado (> 10 s) | ~1 ms |
+
+O padrão pendura porque o ioredis guarda comandos numa *offline queue* até reconectar, e o BullMQ espera a
+conexão ficar pronta antes de enviar qualquer comando (mesmo com a offline queue desligada). Pendurado, o webhook
+ficaria esperando e o retry interno do `ReceiveOrder` nunca rodaria. O adapter (`BullMqEnrichmentQueue`):
+
+1. Usa uma conexão ioredis própria com `enableOfflineQueue: false`, `maxRetriesPerRequest: 0` e
+   `commandTimeout` (o único jeito de notar um Redis travado, que mantém o TCP aberto).
+2. **Não chama o BullMQ se a conexão não está `ready`**: falha na hora com `QueueUnavailableError`.
+3. Reconecta em segundo plano (no máximo a cada 2 s) e loga só as mudanças de estado, não cada tentativa.
+
+**`isAvailable()`** lê o estado da conexão que o cliente já conhece, sem ida à rede. A varredura usa para nem
+consultar o Mongo com o Redis fora. É otimização, não garantia: Redis **travado** continua `ready` e o enqueue falha
+mesmo assim (*check-then-act*), por isso a varredura segue parando na primeira falha.
+
+**`jobId` codificado:** o BullMQ recusa id que seja inteiro (`"12345"`) ou que tenha `:` (com uma exceção
+inconsistente: aceita exatamente 3 partes, por compatibilidade com um formato antigo). Como a chave vem do cliente,
+o adapter usa `k_` + base64url da chave: nunca numérico, sem `:`, sem colisão e reversível.
+
 ## Resiliência com a Frankfurter
 
 - **Healthcheck** (`GET /health`, terminus): Mongo é crítico; Redis e Frankfurter são *degradáveis*
@@ -162,7 +190,7 @@ Sem índice em `errors`/`error_codes` por enquanto: coleção é muito mais escr
 - `POST /orders/reprocess`: reenfileira `FAILED_ENRICHMENT` com `retryable: true`.
 - Fila separada `orders-enrichment-reprocess`, concorrência baixa e `limiter`
   (`REPROCESS_RATE_PER_SECOND`), para não competir com pedidos novos nem disparar rajada na Frankfurter.
-- Novo `jobId` (`{key}:reprocess:{n}`), limite `REPROCESS_MAX_COUNT`.
+- Novo `jobId` (chave atual + sufixo de reprocesso, codificado como os demais), limite `REPROCESS_MAX_COUNT`.
 - Automático (job recorrente, só com circuito fechado): candidato a ficar documentado se o tempo apertar.
 
 ## Varredura de órfãos

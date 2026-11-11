@@ -9,9 +9,15 @@ export class FakeEnrichmentQueue extends EnrichmentQueue {
   /** Every enqueue call, including the ones that failed. */
   attempts = 0;
   private failuresLeft = 0;
+  private offline = false;
+
+  isAvailable(): boolean {
+    return !this.offline;
+  }
 
   async enqueue(job: EnrichmentJob): Promise<void> {
     this.attempts += 1;
+    if (this.offline) throw new Error('Redis connection is closed');
     if (this.failuresLeft > 0) {
       this.failuresLeft -= 1;
       throw new Error('Redis unavailable');
@@ -20,13 +26,22 @@ export class FakeEnrichmentQueue extends EnrichmentQueue {
     this.jobs.push(job);
   }
 
-  /** The next `times` enqueue calls fail, as if Redis were down. `Infinity` keeps it down. */
+  /**
+   * The next `times` enqueue calls fail while isAvailable() still says true:
+   * Redis fell between the check and the command. `Infinity` keeps failing.
+   */
   failNext(times = 1): void {
     this.failuresLeft = times;
+  }
+
+  /** The connection is known to be down: isAvailable() is false and every enqueue fails. */
+  goOffline(): void {
+    this.offline = true;
   }
 
   /** Redis is back. */
   recover(): void {
     this.failuresLeft = 0;
+    this.offline = false;
   }
 }

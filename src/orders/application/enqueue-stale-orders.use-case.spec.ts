@@ -155,6 +155,43 @@ describe('EnqueueStaleOrders (orphan sweeper)', () => {
     expect(await sweeper().execute()).toEqual({ enqueued: 3 });
   });
 
+  describe('queue availability', () => {
+    it('skips the run without querying Mongo when the queue is known to be down', async () => {
+      await receive(3);
+      advance(3 * MINUTE);
+      queue.goOffline();
+      const lookups = vi.spyOn(repository, 'findStaleReceived');
+
+      const result = await sweeper().execute();
+
+      expect(result).toEqual({ enqueued: 0, skipped: 'queue_unavailable' });
+      expect(lookups).not.toHaveBeenCalled();
+      expect(queue.attempts).toBe(0);
+    });
+
+    it('sweeps normally once the queue is back', async () => {
+      await receive(3);
+      advance(3 * MINUTE);
+      queue.goOffline();
+      await sweeper().execute();
+
+      queue.recover();
+
+      expect(await sweeper().execute()).toEqual({ enqueued: 3 });
+    });
+
+    it('still stops at the first failure when the queue looked available (it fell after the check)', async () => {
+      await receive(3);
+      advance(3 * MINUTE);
+      queue.failNext(Infinity); // isAvailable() stays true: the check passed, the enqueue fails
+
+      const result = await sweeper().execute();
+
+      expect(result).toEqual({ enqueued: 0, error: expect.any(Error) });
+      expect(queue.attempts).toBe(1);
+    });
+  });
+
   it('never loops forever, even if the stamp is not refreshed', async () => {
     // A runaway loop over instantly-resolving fakes would starve the test timeout,
     // so the fake itself fails the test after too many queries.

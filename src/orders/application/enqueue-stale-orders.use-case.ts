@@ -11,6 +11,8 @@ export interface EnqueueStaleOrdersResult {
   enqueued: number;
   /** Set when the run stopped early because the queue refused an enqueue. */
   error?: unknown;
+  /** Set when the run did nothing because the queue was known to be down. */
+  skipped?: 'queue_unavailable';
 }
 
 /**
@@ -29,6 +31,11 @@ export class EnqueueStaleOrders {
   ) {}
 
   async execute(): Promise<EnqueueStaleOrdersResult> {
+    // Nothing could be enqueued: do not even query Mongo.
+    if (!this.queue.isAvailable()) {
+      return { enqueued: 0, skipped: 'queue_unavailable' };
+    }
+
     const now = this.clock();
     const cutoff = new Date(now.getTime() - this.settings.staleAfterMs);
     const requestId = `sweeper:${now.toISOString()}`;
