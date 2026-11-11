@@ -12,8 +12,8 @@ Os caminhos felizes e tristes de cada regra estão desenhados em **[docs/FLOWS.m
 ```mermaid
 flowchart LR
     C[Cliente] -->|POST /webhooks/orders| API
-    API -->|1. grava RECEIVED| M[(MongoDB)]
-    API -->|2. enfileira| Q[[BullMQ / Redis]]
+    API -->|primeiro: grava RECEIVED| M[(MongoDB)]
+    API -->|depois: enfileira| Q[[BullMQ / Redis]]
     Q --> W[Worker]
     W -->|câmbio| F[Frankfurter]
     W -->|ENRICHED ou FAILED_ENRICHMENT| M
@@ -101,8 +101,42 @@ Todos os erros têm o mesmo formato, com um `code` estável e o `request_id` (ta
   "request_id": "req_6346e2db-...", "errors": [{ "field": "items.0.qty", "message": "qty must be a positive number" }] }
 ```
 
-Status do pedido: `RECEIVED → ENRICHING → ENRICHED`, ou `FAILED_ENRICHMENT` com `failure.reason`
-(`UNSUPPORTED_CURRENCY`, `PROVIDER_UNAVAILABLE`, `PROVIDER_REJECTED`, `INTERNAL_ERROR`) e `failure.retryable`.
+## Ciclo de vida do pedido
+
+Cada seta é uma regra de negócio; nenhuma outra transição é aceita pelo domínio.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> RECEIVED: webhook aceito
+    [*] --> FAILED_ENRICHMENT: moeda não suportada
+    RECEIVED --> ENRICHING: worker pega o job
+    ENRICHING --> ENRICHING: falha temporária, retry
+    ENRICHING --> ENRICHED: câmbio convertido
+    ENRICHING --> FAILED_ENRICHMENT: 4xx ou tentativas esgotadas
+    FAILED_ENRICHMENT --> RECEIVED: reprocesso, se retryable
+    ENRICHED --> RECEIVED: atualização, policy update
+    ENRICHED --> [*]
+```
+
+Em `FAILED_ENRICHMENT`, o pedido traz `failure.reason` (`UNSUPPORTED_CURRENCY`, `PROVIDER_UNAVAILABLE`,
+`PROVIDER_REJECTED`, `INTERNAL_ERROR`) e `failure.retryable`.
+
+## E se...?
+
+| E se... | O que acontece |
+|---|---|
+| a mesma requisição chegar de novo, ou dez iguais ao mesmo tempo? | Um pedido só; a primeira recebe 202, as outras 200 com o mesmo pedido |
+| o mesmo `order_id` chegar com outra chave? | 409 `ORDER_ALREADY_EXISTS` (ou atualiza, com `ORDER_DUPLICATE_POLICY=update`) |
+| o payload for inválido? | 400 listando todos os campos; a tentativa é auditada com dados pessoais mascarados |
+| a moeda não for convertida pela Frankfurter? | 202 e `FAILED_ENRICHMENT` (`UNSUPPORTED_CURRENCY`), sem ocupar a fila |
+| o Redis cair? | O pedido é aceito mesmo assim (202); a varredura de órfãos enfileira quando ele voltar |
+| a Frankfurter cair? | Retry com backoff; após N falhas o circuito abre e a fila pausa sem gastar tentativas |
+| a Frankfurter recusar o pedido (4xx)? | `FAILED_ENRICHMENT` (`PROVIDER_REJECTED`), não reprocessável, cópia na DLQ |
+| as tentativas acabarem? | `FAILED_ENRICHMENT` reprocessável, cópia na DLQ; `POST /orders/reprocess` reenvia |
+| o MongoDB cair? | `/health` responde 503 e o webhook falha: sem banco não há onde gravar pedidos |
+
+Cada caminho, passo a passo: [docs/FLOWS.md](docs/FLOWS.md).
 
 ## Decisões principais
 
@@ -152,6 +186,9 @@ TDD do começo ao fim. Três suítes:
 | Unit | Domínio e casos de uso com fakes em memória (inclusive corridas e Redis fora simulados) | `pnpm test` |
 | Integração | Adapters contra MongoDB e Redis **reais** (Testcontainers) e a Frankfurter mockada | `pnpm test:int` |
 | E2E | A app inteira por HTTP: webhook → fila → worker → pedido, DLQ, circuito, varredura, auditoria | `pnpm test:e2e` |
+
+No GitHub, o **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) roda em todo push e pull request: typecheck,
+lint e unit num job; integração e e2e (com containers) em outro; e o build da imagem Docker num terceiro.
 
 Integração e e2e sobem os containers sozinhos (só precisam do Docker rodando).
 
