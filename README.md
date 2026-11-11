@@ -7,6 +7,7 @@ termina em `FAILED_ENRICHMENT`.
 
 Solução do [desafio backend pleno](https://github.com/buzzmates/desafio-backend-pleno). As decisões de arquitetura,
 com o motivo de cada uma, estão em **[docs/DECISIONS.md](docs/DECISIONS.md)**.
+Os caminhos felizes e tristes de cada regra estão desenhados em **[docs/FLOWS.md](docs/FLOWS.md)**.
 
 ```mermaid
 flowchart LR
