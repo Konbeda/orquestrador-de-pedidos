@@ -204,9 +204,35 @@ o adapter usa `k_` + base64url da chave: nunca numérico, sem `:`, sem colisão 
 
 - **Healthcheck** (`GET /health`, terminus): Mongo é crítico; Redis e Frankfurter são *degradáveis*
   (reportam `degraded`, não derrubam): sem Redis o recebimento continua e a varredura enfileira depois. No start só loga warning: a app sobe mesmo com ela fora, para não perder pedidos.
-- **Circuit breaker** próprio (closed → open → half-open), com relógio injetado para teste.
+- **Circuit breaker** próprio e genérico (`shared/resilience`), relógio injetado para teste:
+  `CIRCUIT_FAILURE_THRESHOLD` falhas **consecutivas** abrem; após `CIRCUIT_RESET_TIMEOUT_MS` vira half-open e
+  deixa passar **um** teste por vez; teste ok fecha, teste com falha reabre na hora (por mais um período inteiro).
+- **Só queda conta como falha.** `isFailure` recebe só `ProviderUnavailableError`: um 4xx prova que a Frankfurter
+  está respondendo, então nem conta nem zera a contagem; no half-open, um 4xx fecha o circuito.
+- **Decorator** (`CircuitBreakingExchangeRateProvider`) envolve qualquer provedor; o cliente HTTP não sabe do breaker.
+  Com o circuito aberto, a chamada falha como `ProviderUnavailableError` (temporária): um worker que corre contra a
+  abertura do circuito tenta de novo em vez de falhar o pedido. O `EnrichOrder` checa `isAvailable()` antes, então
+  a maioria dos jobs nem chega a chamar.
+- **Estado por processo:** cada instância tem seu circuito. Com várias instâncias, cada uma aprende sozinha que a
+  Frankfurter caiu (algumas chamadas a mais). Circuito compartilhado (no Redis) fica como melhoria.
 - **Circuito aberto:** o worker devolve o job para a fila com `worker.rateLimit()` + `RateLimitError`,
   **sem gastar tentativa**; o pedido continua `RECEIVED` e a fila volta a andar quando o circuito fecha.
+
+### Cliente HTTP (`FrankfurterClient`)
+
+`fetch` nativo com `AbortSignal.timeout(FRANKFURTER_TIMEOUT_MS)`. Mapeamento conferido na API real:
+
+| Resposta | Erro | Por quê |
+|---|---|---|
+| 404 (moeda inexistente **ou** não suportada, ex.: `ARS`), 422 (mesma moeda), 400 | `ProviderRejectedError` | A mesma requisição nunca vai funcionar |
+| 408, **429** (rate limit), 5xx | `ProviderUnavailableError` | 4xx de *momento*, não de conteúdo: tentar depois funciona |
+| Timeout, rede, corpo que não é JSON, 200 sem a taxa | `ProviderUnavailableError` | Provedor instável |
+
+**Risco aceito:** `FRANKFURTER_BASE_URL` errada também responde 404 e pareceria "moeda rejeitada" (falha
+permanente em todo pedido). Mitigação: o boot consulta `/currencies` e o `/health` expõe o erro de configuração.
+
+Nos testes, o timeout usa um **servidor HTTP local que nunca responde**, não o `delay()` do nock: abortar um `fetch`
+nativo durante o atraso do nock dispara um `assert` interno do undici (erro solto que o Vitest acusa).
 
 ## Reprocessamento
 

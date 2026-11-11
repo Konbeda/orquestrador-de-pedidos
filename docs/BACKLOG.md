@@ -16,11 +16,13 @@ Cada item começa com o teste vermelho. Decisões e motivos em [DECISIONS.md](DE
 - [x] `ReceiveOrder` desiste na hora (sem dormir) quando `isAvailable()` diz que o Redis caiu
 - [x] `EnrichOrder`: sucesso, job repetido/fantasma, temporário x permanente x interno, última tentativa,
       circuito aberto, lock otimista com o cliente, falhas de banco ao salvar
+- [x] Circuit breaker genérico (closed → open → half-open, um teste por vez, só queda conta)
+- [x] `FrankfurterClient` (nock + servidor lento real): mapeamento conferido na API, 429 temporário, `/currencies`
+- [x] `CircuitBreakingExchangeRateProvider` (decorator)
 
 ## Casos de uso (unit, com fakes)
 
 - [ ] Varredura de `ENRICHING` parados (fecha a lacuna de quando nem a falha consegue ser gravada)
-- [ ] Circuit breaker (closed → open → half-open), relógio injetado
 - [ ] `SupportedCurrencies`: carrega da Frankfurter, fallback quando fora, TTL do cache
 - [ ] `ReprocessOrders`: só `retryable`, respeita o limite, fila de reprocesso separada, `jobId` novo
 - [ ] `maskPII()` e montagem do registro de rejeição (`error_codes`, `payload_hash`)
@@ -33,7 +35,6 @@ Cada item começa com o teste vermelho. Decisões e motivos em [DECISIONS.md](DE
 - [ ] Contrato compartilhado: a mesma suíte roda contra o fake e o Mongo, provando que o fake não mente
 - [ ] Worker BullMQ: traduz os erros do `EnrichOrder` (retry com backoff, `UnrecoverableError` + DLQ,
       `rateLimit` + `RateLimitError` com circuito aberto)
-- [ ] `FrankfurterClient` (nock): sucesso, timeout, 4xx, 5xx, `/currencies`
 - [ ] `webhook_rejections`: índices (request_id unique, source+received_at, TTL)
 
 ## HTTP e worker
@@ -42,7 +43,8 @@ Cada item começa com o teste vermelho. Decisões e motivos em [DECISIONS.md](DE
       mapeamento de erros (409 / 422), `x-request-id` na resposta, warning quando `pendingEnqueue`
 - [ ] `GET /orders`, `GET /orders/:id` (sem expor o array de chaves), `GET /queue/metrics`
 - [ ] `POST /orders/reprocess`, `GET /webhooks/rejections`
-- [ ] `GET /health` (Mongo crítico; Redis e Frankfurter degradáveis)
+- [ ] `GET /health` (Mongo crítico; Redis e Frankfurter degradáveis), check de `/currencies` no boot
+      (expõe `FRANKFURTER_BASE_URL` errada)
 - [ ] Agendamento da varredura (`@nestjs/schedule`, `SWEEP_INTERVAL_MS`), log do resultado de cada execução
 
 ## E2E
