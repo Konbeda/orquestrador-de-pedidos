@@ -10,6 +10,8 @@ import {
   IdempotencyKeyReusedError,
   OrderAlreadyExistsError,
 } from '../../orders/application/receive-order.use-case.js';
+import { OrderNotFoundError } from '../../orders/http/order-not-found.error.js';
+import { QueueUnavailableError } from '../../orders/infra/queue/bullmq-enrichment.queue.js';
 
 export interface FieldError {
   field: string;
@@ -44,6 +46,8 @@ const KNOWN: Array<[new (...args: never[]) => Error, number, string]> = [
     'IDEMPOTENCY_KEY_REUSED',
   ],
   [InvalidOrderError, HttpStatus.UNPROCESSABLE_ENTITY, 'INVALID_ORDER'],
+  [OrderNotFoundError, HttpStatus.NOT_FOUND, 'ORDER_NOT_FOUND'],
+  [QueueUnavailableError, HttpStatus.SERVICE_UNAVAILABLE, 'QUEUE_UNAVAILABLE'],
 ];
 
 /** body-parser errors reach Nest as plain errors with a `type`. */

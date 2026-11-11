@@ -5,14 +5,17 @@ import type {
   EnrichOrderCommand,
   EnrichOrderResult,
 } from '../../application/enrich-order.use-case.js';
-import { ENRICHMENT_QUEUE_NAME } from './bullmq-enrichment.queue.js';
+import {
+  DEAD_LETTER_QUEUE_NAME,
+  ENRICHMENT_QUEUE_NAME,
+} from './bullmq-enrichment.queue.js';
 import {
   EnrichmentJobProcessor,
   ReleaseJobForSweeper,
   type DeadLetter,
 } from './enrichment-job.processor.js';
 
-export const DEAD_LETTER_QUEUE_NAME = 'orders-enrichment-dlq';
+export { DEAD_LETTER_QUEUE_NAME } from './bullmq-enrichment.queue.js';
 
 export interface EnrichmentWorkerSettings {
   host: string;

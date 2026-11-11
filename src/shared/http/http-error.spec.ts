@@ -14,6 +14,8 @@ import {
   IdempotencyKeyReusedError,
   OrderAlreadyExistsError,
 } from '../../orders/application/receive-order.use-case.js';
+import { OrderNotFoundError } from '../../orders/http/order-not-found.error.js';
+import { QueueUnavailableError } from '../../orders/infra/queue/bullmq-enrichment.queue.js';
 import {
   InvalidPayloadError,
   flattenValidationErrors,
@@ -28,6 +30,12 @@ describe('toHttpError', () => {
     [new ConcurrentUpdateError('ext-1'), 409, 'CONCURRENT_UPDATE'],
     [new IdempotencyKeyReusedError('key-1'), 422, 'IDEMPOTENCY_KEY_REUSED'],
     [new InvalidOrderError('bad'), 422, 'INVALID_ORDER'],
+    [new OrderNotFoundError('abc'), 404, 'ORDER_NOT_FOUND'],
+    [
+      new QueueUnavailableError('redis is reconnecting'),
+      503,
+      'QUEUE_UNAVAILABLE',
+    ],
   ])('%s → %i %s', (error, status, code) => {
     expect(toHttpError(error)).toMatchObject({
       status,

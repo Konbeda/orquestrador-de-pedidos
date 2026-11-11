@@ -28,6 +28,8 @@ Cada item começa com o teste vermelho. Decisões e motivos em [DECISIONS.md](DE
       `WORKER_ENABLED`; e2e do fluxo completo (enriquecido, mesma moeda, falha + DLQ, circuito pausando a fila)
 - [x] Varredura agendada (`PeriodicTask` sem sobreposição) + e2e: órfão sem job termina enriquecido
 - [x] `GET /health` com 3 estados (só Mongo derruba), hint de `FRANKFURTER_BASE_URL`, healthcheck no compose
+- [x] `GET /orders` (cursor, filtros, contrato no fake e no Mongo), `GET /orders/:id`, `GET /queue/metrics`
+      (contagens, pausa do circuito, DLQ; 503 rápido com Redis fora)
 
 ## Casos de uso (unit, com fakes)
 
@@ -43,12 +45,10 @@ Cada item começa com o teste vermelho. Decisões e motivos em [DECISIONS.md](DE
 
 - [ ] Auditoria dos 400 em `webhook_rejections` (mascarado, `payload_hash`, `error_codes`, TTL)
 - [ ] Swagger: `@ApiProperty` nos DTOs e respostas documentadas
-- [ ] `GET /orders`, `GET /orders/:id` (sem expor o array de chaves), `GET /queue/metrics`
 - [ ] `POST /orders/reprocess`, `GET /webhooks/rejections`
 
 ## E2E
 
-- [ ] `/queue/metrics` refletindo a DLQ depois de uma falha final
 - [ ] Payload inválido → 400 + registro mascarado
 
 ## Entrega

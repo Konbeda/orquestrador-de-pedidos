@@ -179,6 +179,100 @@ export function describeOrderRepositoryContract(
       });
     });
 
+    describe('list (GET /orders)', () => {
+      /** Stores n orders; the i-th one ends in `statuses[i]` (RECEIVED when absent). */
+      async function store(n: number, statuses: OrderStatus[] = []) {
+        const ids: string[] = [];
+        for (let i = 0; i < n; i++) {
+          const order = await repository.insert(Order.receive(props(i + 1)));
+          if (statuses[i] === OrderStatus.ENRICHING) {
+            order.startEnrichment();
+            await repository.update(order, 1);
+          }
+          ids.push(order.id!);
+        }
+        return ids;
+      }
+      const idsOf = (orders: Order[]) => orders.map((o) => o.id);
+
+      it('returns the newest first, up to the limit', async () => {
+        const [a, b, c] = await store(3);
+
+        expect(idsOf(await repository.list({ limit: 10 }))).toEqual([c, b, a]);
+        expect(idsOf(await repository.list({ limit: 2 }))).toEqual([c, b]);
+      });
+
+      it('pages with a cursor: orders older than the given id', async () => {
+        const [a, b, c] = await store(3);
+
+        expect(idsOf(await repository.list({ limit: 10, before: c }))).toEqual([
+          b,
+          a,
+        ]);
+        expect(idsOf(await repository.list({ limit: 10, before: a }))).toEqual(
+          [],
+        );
+      });
+
+      it('filters by status', async () => {
+        const [a, b, c] = await store(3, [
+          OrderStatus.RECEIVED,
+          OrderStatus.ENRICHING,
+          OrderStatus.RECEIVED,
+        ]);
+
+        expect(
+          idsOf(
+            await repository.list({ limit: 10, status: OrderStatus.RECEIVED }),
+          ),
+        ).toEqual([c, a]);
+        expect(
+          idsOf(
+            await repository.list({ limit: 10, status: OrderStatus.ENRICHING }),
+          ),
+        ).toEqual([b]);
+      });
+
+      it('filters by order_id', async () => {
+        const [, b] = await store(3);
+
+        expect(
+          idsOf(await repository.list({ limit: 10, orderId: 'ext-2' })),
+        ).toEqual([b]);
+        expect(
+          await repository.list({ limit: 10, orderId: 'ext-404' }),
+        ).toEqual([]);
+      });
+
+      it('combines status, cursor and limit', async () => {
+        const [a, , c, d] = await store(4, [
+          OrderStatus.RECEIVED,
+          OrderStatus.ENRICHING, // b: skipped by the status filter
+          OrderStatus.RECEIVED,
+          OrderStatus.RECEIVED,
+        ]);
+
+        expect(
+          idsOf(
+            await repository.list({
+              limit: 1,
+              status: OrderStatus.RECEIVED,
+              before: d,
+            }),
+          ),
+        ).toEqual([c]);
+        expect(
+          idsOf(
+            await repository.list({
+              limit: 5,
+              status: OrderStatus.RECEIVED,
+              before: d,
+            }),
+          ),
+        ).toEqual([c, a]);
+      });
+    });
+
     describe('optimistic lock on revision', () => {
       it('saves when the stored revision is the expected one', async () => {
         const order = await repository.insert(Order.receive(props(1)));

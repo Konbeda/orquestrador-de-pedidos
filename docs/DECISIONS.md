@@ -367,8 +367,21 @@ cliente trata por ele, não pela mensagem. Tabela única em `shared/http/http-er
 
 ## Consulta
 
-- `GET /orders?status=&order_id=`, `GET /orders/:id` (id interno), `GET /queue/metrics` (principal, reprocesso e DLQ).
-- `GET /webhooks/rejections?request_id=|source=&from=&to=`.
+- **`GET /orders?status=&order_id=&limit=&cursor=`** → `{ data, next_cursor }`, mais recentes primeiro.
+  - **Paginação por cursor**, não por offset: com pedidos chegando o tempo todo, offset faz itens pularem ou
+    repetirem entre páginas. O cursor é o `_id` do último item (ObjectIds crescem com o tempo): `_id < cursor`.
+  - Busca `limit + 1` linhas: a sobra diz se há próxima página, sem uma consulta de contagem.
+  - Índice `{ status: 1, _id: -1 }`: filtro por status e cursor na mesma leitura de índice.
+  - `limit` de 1 a 100 (padrão 20); status fora do enum, limite fora da faixa ou cursor malformado → 400.
+- **`GET /orders/:id`** (id interno) → mesmo formato da resposta do webhook; inexistente ou malformado → 404
+  `ORDER_NOT_FOUND`. Nenhuma resposta de leitura expõe dados do cliente nem as chaves.
+- **Leitura sem caso de uso:** o controller vai direto ao port do repositório; uma leitura não tem regra de negócio
+  para proteger, e um caso de uso que só repassa seria cerimônia.
+- **`GET /queue/metrics`** →
+  `{ enrichment: { waiting, active, delayed, completed, failed, paused_for_ms }, dead_letter: { total } }`.
+  `paused_for_ms` é o que resta da pausa do circuito aberto (o BullMQ devolve -2 sem pausa; vira 0).
+  Com o Redis fora: 503 `QUEUE_UNAVAILABLE` na hora (mesma conexão de falha rápida do produtor).
+- `GET /webhooks/rejections?request_id=|source=&from=&to=` (com a auditoria dos 400).
 
 ## Fora do escopo (citar no README)
 

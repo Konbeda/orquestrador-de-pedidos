@@ -1,4 +1,5 @@
 import type { Order } from '../../domain/order.js';
+import type { OrderStatus } from '../../domain/order-status.js';
 
 /** Which unique index rejected a write. */
 export type UniqueField = 'idempotencyKey' | 'orderId';
@@ -19,6 +20,15 @@ export class ConcurrentUpdateError extends Error {
   }
 }
 
+export interface OrderListQuery {
+  status?: OrderStatus;
+  /** External order id (exact match). */
+  orderId?: string;
+  limit: number;
+  /** Cursor: only orders created before the one with this id. */
+  before?: string;
+}
+
 /**
  * Persistence port. Implementations must enforce unique idempotency keys
  * (across all orders) and unique order ids, raising DuplicateOrderError.
@@ -28,6 +38,8 @@ export abstract class OrderRepository {
   abstract findById(id: string): Promise<Order | null>;
   abstract findByIdempotencyKey(key: string): Promise<Order | null>;
   abstract findByOrderId(orderId: string): Promise<Order | null>;
+  /** Newest first. */
+  abstract list(query: OrderListQuery): Promise<Order[]>;
   /** Stores a new order and returns it with its generated id. */
   abstract insert(order: Order): Promise<Order>;
   /** Saves only if the stored revision still equals `expectedRevision`, else ConcurrentUpdateError. */

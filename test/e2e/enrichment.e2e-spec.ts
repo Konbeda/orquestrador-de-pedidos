@@ -128,5 +128,11 @@ describe('Webhook → queue → worker → Frankfurter → order (e2e)', () => {
       reason: 'PROVIDER_UNAVAILABLE',
       attempts: 3, // ENRICHMENT_MAX_ATTEMPTS in the test app
     });
+
+    const metrics = await request(app.getHttpServer())
+      .get('/queue/metrics')
+      .expect(200);
+    expect(metrics.body.dead_letter.total).toBeGreaterThanOrEqual(1);
+    expect(metrics.body.enrichment.failed).toBeGreaterThanOrEqual(1);
   });
 });

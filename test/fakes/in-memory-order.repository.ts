@@ -4,6 +4,7 @@ import {
   ConcurrentUpdateError,
   DuplicateOrderError,
   OrderRepository,
+  type OrderListQuery,
 } from '../../src/orders/application/ports/order.repository.js';
 
 interface Row {
@@ -40,6 +41,23 @@ export class InMemoryOrderRepository extends OrderRepository {
 
   async findByOrderId(orderId: string): Promise<Order | null> {
     return this.findOne((s) => s.orderId === orderId);
+  }
+
+  async list({
+    status,
+    orderId,
+    limit,
+    before,
+  }: OrderListQuery): Promise<Order[]> {
+    // Ids are `order_<sequence>`: the sequence plays the role of the ObjectId time order.
+    const seq = (id: string) => Number(id.slice('order_'.length));
+    return this.snapshots()
+      .filter((s) => !status || s.status === status)
+      .filter((s) => !orderId || s.orderId === orderId)
+      .filter((s) => !before || seq(s.id!) < seq(before))
+      .sort((a, b) => seq(b.id!) - seq(a.id!))
+      .slice(0, limit)
+      .map((s) => Order.fromSnapshot(s));
   }
 
   async insert(order: Order): Promise<Order> {

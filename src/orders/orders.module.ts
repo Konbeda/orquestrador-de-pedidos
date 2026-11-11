@@ -23,6 +23,7 @@ import { BullMqEnrichmentQueue } from './infra/queue/bullmq-enrichment.queue.js'
 import { EnrichmentWorkerRunner } from './infra/queue/enrichment-worker.runner.js';
 import { OrphanSweeperRunner } from './infra/queue/orphan-sweeper.runner.js';
 import { WebhooksController } from './http/webhooks.controller.js';
+import { OrdersController } from './http/orders.controller.js';
 
 type Config = ConfigService<Env, true>;
 const logger = new Logger('OrdersModule');
@@ -36,7 +37,7 @@ const logger = new Logger('OrdersModule');
   imports: [
     MongooseModule.forFeature([{ name: ORDER_MODEL, schema: OrderSchema }]),
   ],
-  controllers: [WebhooksController],
+  controllers: [WebhooksController, OrdersController],
   // Read by the health check (state only, no network round trips).
   exports: [
     CachedSupportedCurrencies,

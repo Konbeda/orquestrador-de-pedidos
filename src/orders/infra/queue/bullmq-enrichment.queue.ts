@@ -7,6 +7,8 @@ import {
 } from '../../application/ports/enrichment.queue.js';
 
 export const ENRICHMENT_QUEUE_NAME = 'orders-enrichment';
+/** Final failures, copied by the worker. Nobody consumes it. */
+export const DEAD_LETTER_QUEUE_NAME = 'orders-enrichment-dlq';
 const ENRICH_JOB = 'enrich';
 
 export interface BullMqEnrichmentQueueSettings {
@@ -17,6 +19,18 @@ export interface BullMqEnrichmentQueueSettings {
   attempts: number;
   /** Base delay of the exponential backoff between attempts. */
   backoffMs: number;
+}
+
+export interface EnrichmentQueueMetrics {
+  enrichment: {
+    waiting: number;
+    active: number;
+    delayed: number;
+    completed: number;
+    failed: number;
+    paused_for_ms: number;
+  };
+  dead_letter: { total: number };
 }
 
 export class QueueUnavailableError extends Error {
@@ -46,6 +60,7 @@ export class BullMqEnrichmentQueue extends EnrichmentQueue {
   private readonly logger = new Logger(BullMqEnrichmentQueue.name);
   private readonly redis: Redis;
   private readonly queue: Queue;
+  private readonly deadLetters: Queue;
   private wasReady = false;
 
   constructor(private readonly settings: BullMqEnrichmentQueueSettings) {
@@ -72,6 +87,9 @@ export class BullMqEnrichmentQueue extends EnrichmentQueue {
         removeOnFail: { age: 7 * 24 * 60 * 60 },
       },
     });
+    this.deadLetters = new Queue(DEAD_LETTER_QUEUE_NAME, {
+      connection: this.redis,
+    });
     this.watchConnection();
   }
 
@@ -92,8 +110,40 @@ export class BullMqEnrichmentQueue extends EnrichmentQueue {
     );
   }
 
+  /** For GET /queue/metrics. Fails fast (QueueUnavailableError) with Redis down. */
+  async metrics(): Promise<EnrichmentQueueMetrics> {
+    if (!this.isAvailable()) {
+      throw new QueueUnavailableError(`redis is ${this.redis.status}`);
+    }
+    const [counts, pauseTtl, deadLetters] = await Promise.all([
+      this.queue.getJobCounts(
+        'waiting',
+        'active',
+        'delayed',
+        'completed',
+        'failed',
+      ),
+      this.queue.getRateLimitTtl(),
+      // Dead letters are never consumed: they all sit in waiting.
+      this.deadLetters.getJobCountByTypes('waiting'),
+    ]);
+    return {
+      enrichment: {
+        waiting: counts.waiting ?? 0,
+        active: counts.active ?? 0,
+        delayed: counts.delayed ?? 0,
+        completed: counts.completed ?? 0,
+        failed: counts.failed ?? 0,
+        // Remaining pause set by the open circuit (negative = no pause key).
+        paused_for_ms: Math.max(0, pauseTtl),
+      },
+      dead_letter: { total: deadLetters },
+    };
+  }
+
   async close(): Promise<void> {
     await this.queue.close().catch(() => undefined);
+    await this.deadLetters.close().catch(() => undefined);
     this.redis.disconnect();
   }
 

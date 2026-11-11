@@ -5,6 +5,7 @@ import { GenericContainer, type StartedTestContainer } from 'testcontainers';
 import {
   BullMqEnrichmentQueue,
   ENRICHMENT_QUEUE_NAME,
+  QueueUnavailableError,
   type BullMqEnrichmentQueueSettings,
 } from '../../src/orders/infra/queue/bullmq-enrichment.queue.js';
 import { waitFor } from '../helpers/wait-for.js';
@@ -178,6 +179,14 @@ describe('BullMqEnrichmentQueue (integration)', () => {
 
       expect(stopped.rejected).toBe(true);
       expect(stopped.ms).toBeLessThan(300);
+
+      // Metrics too: a clear "unavailable" (503), fast, instead of a generic failure.
+      const metrics = await timed(queue.metrics());
+      expect(metrics.rejected).toBe(true);
+      expect(metrics.ms).toBeLessThan(300);
+      await expect(queue.metrics()).rejects.toBeInstanceOf(
+        QueueUnavailableError,
+      );
     });
 
     it('app booted before Redis: rejects at once instead of hanging, works once Redis is up', async () => {

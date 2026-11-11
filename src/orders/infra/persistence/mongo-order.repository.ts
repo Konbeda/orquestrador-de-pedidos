@@ -5,6 +5,7 @@ import {
   ConcurrentUpdateError,
   DuplicateOrderError,
   OrderRepository,
+  type OrderListQuery,
   type UniqueField,
 } from '../../application/ports/order.repository.js';
 import type { OrderDocument } from './order.schema.js';
@@ -34,6 +35,28 @@ export class MongoOrderRepository extends OrderRepository {
 
   findByOrderId(orderId: string): Promise<Order | null> {
     return this.one({ order_id: orderId });
+  }
+
+  async list({
+    status,
+    orderId,
+    limit,
+    before,
+  }: OrderListQuery): Promise<Order[]> {
+    const filter: Record<string, unknown> = {};
+    if (status) filter.status = status;
+    if (orderId) filter.order_id = orderId;
+    if (before) {
+      if (!OBJECT_ID.test(before)) return [];
+      // ObjectIds grow with creation time: "before this id" = older than it.
+      filter._id = { $lt: new Types.ObjectId(before) };
+    }
+    const documents = await this.model
+      .find(filter)
+      .sort({ _id: -1 })
+      .limit(limit)
+      .lean<OrderDocument[]>();
+    return documents.map((doc) => this.toOrder(doc));
   }
 
   async insert(order: Order): Promise<Order> {
