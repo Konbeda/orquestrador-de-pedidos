@@ -29,10 +29,24 @@ RECEIVED → ENRICHING → ENRICHED
 Só existe `FAILED_ENRICHMENT` para falha; o motivo fica em `failure_reason`
 (`UNSUPPORTED_CURRENCY`, `PROVIDER_UNAVAILABLE`, `PROVIDER_REJECTED`...) e `retryable` indica se pode ser reprocessado.
 
+## Dinheiro
+
+Somas e conversões em **centavos inteiros** (`money.ts`), para não acumular erro de ponto flutuante
+(`0.1 * 3 = 0.30000000000000004`). Assume 2 casas decimais, o que cobre as moedas da Frankfurter.
+
+## Domínio
+
+`Order` (agregado) concentra a máquina de status e as regras de dinheiro, sem conhecer HTTP, Mongo ou BullMQ.
+Transições inválidas lançam erros de domínio (`InvalidOrderTransitionError`, `OrderBeingProcessedError`,
+`ReprocessNotAllowedError`), que a camada HTTP traduz para 409/422.
+
 ## Idempotência (3 camadas)
 
-1. **Banco (fonte da verdade):** índice `unique` em `idempotency_key` e em `order_id`.
+1. **Banco (fonte da verdade):** índice `unique` em `idempotency_keys` e em `order_id`.
    Inserções concorrentes iguais: só uma vence, a outra recebe duplicate key (E11000).
+   `idempotency_keys` é um **array** (o pedido guarda todas as chaves já aplicadas, por causa da
+   política `update`); índice unique sobre array no Mongo garante que nenhuma chave aparece em dois pedidos.
+   A chave atual (última do array) é o `jobId`.
 2. **Fila:** `jobId = idempotency_key`; o BullMQ ignora job repetido.
 3. **Worker:** só enriquece se o status ainda permitir; job reentregue para pedido `ENRICHED` não faz nada.
 
