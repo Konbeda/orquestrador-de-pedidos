@@ -19,6 +19,8 @@ Cada item começa com o teste vermelho. Decisões e motivos em [DECISIONS.md](DE
 - [x] Circuit breaker genérico (closed → open → half-open, um teste por vez, só queda conta)
 - [x] `FrankfurterClient` (nock + servidor lento real): mapeamento conferido na API, 429 temporário, `/currencies`
 - [x] `CircuitBreakingExchangeRateProvider` (decorator)
+- [x] `MongoOrderRepository` + teste de contrato (fake e Mongo real): unique multikey, E11000, lock otimista,
+      10 inserts simultâneos = 1 pedido, varredura
 
 ## Casos de uso (unit, com fakes)
 
@@ -29,16 +31,13 @@ Cada item começa com o teste vermelho. Decisões e motivos em [DECISIONS.md](DE
 
 ## Adapters (integration, Mongo/Redis reais)
 
-- [ ] `MongoOrderRepository`: índices únicos (inclusive sobre o array de chaves), E11000 → `DuplicateOrderError`,
-      lock otimista por `revision`, 10 inserts simultâneos = 1 pedido,
-      `queue_checked_at` + `findStaleReceived` / `markQueueChecked`
-- [ ] Contrato compartilhado: a mesma suíte roda contra o fake e o Mongo, provando que o fake não mente
 - [ ] Worker BullMQ: traduz os erros do `EnrichOrder` (retry com backoff, `UnrecoverableError` + DLQ,
       `rateLimit` + `RateLimitError` com circuito aberto)
 - [ ] `webhook_rejections`: índices (request_id unique, source+received_at, TTL)
 
 ## HTTP e worker
 
+- [ ] Módulo do Nest: ligar adapters aos ports, aguardar `model.init()` (índices) antes de aceitar tráfego
 - [ ] `POST /webhooks/orders`: DTO (class-validator, ISO 4217), 400 com `request_id` + auditoria, 413,
       mapeamento de erros (409 / 422), `x-request-id` na resposta, warning quando `pendingEnqueue`
 - [ ] `GET /orders`, `GET /orders/:id` (sem expor o array de chaves), `GET /queue/metrics`

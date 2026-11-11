@@ -154,13 +154,11 @@ describe('FrankfurterClient (HTTP mocked with nock)', () => {
 
   describe('listCurrencies', () => {
     it('returns the supported ISO codes', async () => {
-      nock('https://frankfurter.test')
-        .get('/v1/currencies')
-        .reply(200, {
-          BRL: 'Brazilian Real',
-          EUR: 'Euro',
-          USD: 'United States Dollar',
-        });
+      nock('https://frankfurter.test').get('/v1/currencies').reply(200, {
+        BRL: 'Brazilian Real',
+        EUR: 'Euro',
+        USD: 'United States Dollar',
+      });
 
       await expect(client().listCurrencies()).resolves.toEqual([
         'BRL',

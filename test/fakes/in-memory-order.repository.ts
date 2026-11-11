@@ -80,6 +80,14 @@ export class InMemoryOrderRepository extends OrderRepository {
       this.pendingConcurrentUpdate = false;
       throw new ConcurrentUpdateError(order.orderId);
     }
+    // Same unique index as on insert: no key may sit in two orders.
+    const keys = order.idempotencyKeys;
+    const takenElsewhere = [...this.rows.entries()].some(
+      ([id, other]) =>
+        id !== order.id &&
+        other.snapshot.idempotencyKeys.some((k) => keys.includes(k)),
+    );
+    if (takenElsewhere) throw new DuplicateOrderError('idempotencyKey');
     this.rows.set(order.id!, {
       snapshot: { ...order.toSnapshot(), id: order.id },
       queueCheckedAt: this.now(),

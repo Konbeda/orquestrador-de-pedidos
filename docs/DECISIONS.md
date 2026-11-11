@@ -135,15 +135,36 @@ Coleção `webhook_rejections`, separada de `orders`: `request_id`, `received_at
 
 | Coleção | Índice | Uso |
 |---|---|---|
-| `orders` | `idempotency_key` unique | Idempotência por requisição |
+| `orders` | `idempotency_keys` unique (multikey) | Idempotência: nenhuma chave em dois pedidos |
 | `orders` | `order_id` unique | Mesmo pedido com outra chave |
-| `orders` | `{ status, retryable, createdAt }` | `GET /orders?status=` e varredura de reprocessamento |
+| `orders` | `{ status, queue_checked_at }` | Varredura de órfãos (o índice já entrega a ordem do `sort`) |
+| `orders` | `{ status, failure.retryable, created_at: -1 }` | `GET /orders?status=` e varredura de reprocessamento |
 | `webhook_rejections` | `request_id` unique | Consulta pontual do suporte |
 | `webhook_rejections` | `{ source, received_at }` | "Rejeições do cliente X no período" |
 | `webhook_rejections` | `received_at` TTL | Exportação por período + expurgo automático |
 
 Sem índice em `errors`/`error_codes` por enquanto: coleção é muito mais escrita que lida.
 `error_codes` já é gravado; o índice pode ser criado depois sem mudar código.
+
+## Persistência (`MongoOrderRepository`)
+
+- **Campos em snake_case** no banco (`order_id`, `idempotency_keys`, `unit_price`...), como o payload e a API;
+  o domínio usa camelCase e o adapter traduz nos dois sentidos.
+- **Lock otimista pelo filtro:** `updateOne({ _id, revision: esperada })`. `matchedCount = 0` com o documento
+  existindo = alguém salvou antes → `ConcurrentUpdateError`. `versionKey` (`__v`) do Mongoose desligado: quem
+  controla concorrência é a `revision` do domínio.
+- **E11000 → `DuplicateOrderError`**, usando o `keyPattern` do erro para dizer qual índice recusou
+  (`order_id` ou `idempotency_keys`). Vale também para o `update` (chave nova que já pertence a outro pedido).
+- **`findById` estrito:** só aceita 24 hex; o Mongoose aceitaria qualquer texto de 12 caracteres como ObjectId.
+- **Índices antes do tráfego:** o Mongoose cria índices em segundo plano. Sem o índice único pronto, duas requisições
+  iguais podem gravar dois pedidos. O módulo precisa aguardar `model.init()` antes de aceitar requisições.
+
+### Teste de contrato
+
+Uma única suíte (`test/contracts/order-repository.contract.ts`) descreve o comportamento de qualquer
+`OrderRepository` e roda **contra o fake (unit) e contra o Mongo real (integration)**. Os testes de casos de uso
+confiam no fake; o contrato prova que o fake se comporta como o banco. Já pegou uma divergência: o `update` do fake
+não recusava chave pertencente a outro pedido, e o índice único do Mongo recusa.
 
 ## Enriquecimento, retry e DLQ
 
