@@ -45,6 +45,7 @@ export const envSchema = z.object({
   REPROCESS_RATE_PER_SECOND: positiveInt.default(5),
 
   ORDER_DUPLICATE_POLICY: z.enum(['reject', 'update']).default('reject'),
+  MAX_ORDER_REVISIONS: positiveInt.default(10),
   REJECTION_RETENTION_DAYS: positiveInt.default(90),
 });
 

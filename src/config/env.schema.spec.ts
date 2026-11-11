@@ -18,6 +18,7 @@ describe('validateEnv', () => {
       ENRICHMENT_MAX_ATTEMPTS: 5,
       REJECTION_RETENTION_DAYS: 90,
       REPROCESS_MAX_COUNT: 3,
+      MAX_ORDER_REVISIONS: 10,
     });
   });
 

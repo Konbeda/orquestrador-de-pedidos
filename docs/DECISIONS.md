@@ -64,7 +64,10 @@ Política `update` por status atual:
 | `ENRICHING` | 409 (worker está processando; evita corrida) |
 | `ENRICHED` / `FAILED_ENRICHMENT` | Atualiza, volta para `RECEIVED`, reenfileira com `jobId` = nova chave |
 
-Guarda `revision` e as `idempotency_keys` aplicadas. **Risco aceito:** sem versão no payload,
+Guarda `revision` e as `idempotency_keys` aplicadas. **Teto de revisões** (`MAX_ORDER_REVISIONS`, padrão 10):
+o update que passaria do limite é recusado com 409 e o pedido não muda. Limita o tamanho do array de chaves
+(documento e índice multikey não crescem sem fim) e quantas vezes um cliente com bug, ou hostil,
+consegue devolver o pedido para a fila. As respostas da API expõem só `revision`, nunca o array de chaves. **Risco aceito:** sem versão no payload,
 atualizações fora de ordem seguem *last write wins*. Em produção: exigir `version`/`updated_at` do cliente.
 
 Em sistema com várias origens, o único correto seria `(source, order_id)`; aqui há uma origem só.
@@ -135,6 +138,14 @@ Sem índice em `errors`/`error_codes` por enquanto: coleção é muito mais escr
 
 ## Fora do escopo (citar no README)
 
+- **Autenticação do webhook com assinatura HMAC.** Hoje quem conhece a URL cria e altera pedidos.
+  Em produção: segredo compartilhado (`WEBHOOK_SECRET`), headers `X-Signature: sha256=HMAC(timestamp + body bruto)`
+  e `X-Timestamp`; comparação em tempo constante (`timingSafeEqual`), janela de 5 min contra replay, 401 antes de
+  validar ou tocar no banco (protege também a coleção de auditoria contra flood). Ficou de fora para manter o teste
+  do avaliador simples (um `curl` sem assinar).
+- **Rate limit** (`@nestjs/throttler`) por origem e por `order_id`.
+- Alternativa de idempotência com coleção `idempotency_records` + TTL (modelo Stripe): chaves expiram e dá para
+  devolver a resposta original exata; custo é manter duas coleções consistentes sem transação.
 - Outbox transacional para consistência banco ↔ fila (exige Mongo em replica set).
 - Change Streams para exportar rejeições em tempo real.
 - Logs de rejeição em ferramenta de observabilidade em vez do Mongo.

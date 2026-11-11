@@ -4,6 +4,7 @@ import {
   Order,
   OrderBeingProcessedError,
   ReprocessNotAllowedError,
+  RevisionLimitReachedError,
   type NewOrderProps,
 } from './order.js';
 import { FailureReason, OrderStatus } from './order-status.js';
@@ -221,11 +222,12 @@ describe('Order', () => {
       idempotencyKey: 'key-2',
       items: [{ sku: 'ABC123', qty: 5, unitPrice: 10 }],
     });
+    const limits = { maxRevisions: 10 };
 
     it('updates a RECEIVED order in place: the queued job will read the new version', () => {
       const order = orderIn(OrderStatus.RECEIVED);
 
-      const { requiresEnqueue } = order.applyUpdate(changes);
+      const { requiresEnqueue } = order.applyUpdate(changes, limits);
 
       expect(requiresEnqueue).toBe(false);
       expect(order.status).toBe(OrderStatus.RECEIVED);
@@ -235,9 +237,9 @@ describe('Order', () => {
     });
 
     it('refuses while ENRICHING, to avoid racing the worker', () => {
-      expect(() => orderIn(OrderStatus.ENRICHING).applyUpdate(changes)).toThrow(
-        OrderBeingProcessedError,
-      );
+      expect(() =>
+        orderIn(OrderStatus.ENRICHING).applyUpdate(changes, limits),
+      ).toThrow(OrderBeingProcessedError);
     });
 
     it.each([OrderStatus.ENRICHED, OrderStatus.FAILED_ENRICHMENT])(
@@ -245,7 +247,7 @@ describe('Order', () => {
       (status) => {
         const order = orderIn(status);
 
-        const { requiresEnqueue } = order.applyUpdate(changes);
+        const { requiresEnqueue } = order.applyUpdate(changes, limits);
 
         expect(requiresEnqueue).toBe(true);
         expect(order.status).toBe(OrderStatus.RECEIVED);
@@ -258,11 +260,45 @@ describe('Order', () => {
 
     it('refuses changes that belong to another order', () => {
       expect(() =>
-        orderIn(OrderStatus.RECEIVED).applyUpdate({
-          ...changes,
-          orderId: 'ext-999',
-        }),
+        orderIn(OrderStatus.RECEIVED).applyUpdate(
+          {
+            ...changes,
+            orderId: 'ext-999',
+          },
+          limits,
+        ),
       ).toThrow(InvalidOrderError);
+    });
+
+    describe('revision limit (MAX_ORDER_REVISIONS)', () => {
+      it('allows updates up to the limit', () => {
+        const order = orderIn(OrderStatus.RECEIVED);
+
+        order.applyUpdate(changes, { maxRevisions: 2 });
+
+        expect(order.revision).toBe(2);
+      });
+
+      it('refuses the update that would go past the limit, bounding the stored keys', () => {
+        const order = orderIn(OrderStatus.RECEIVED);
+        order.applyUpdate(changes, { maxRevisions: 2 });
+
+        expect(() =>
+          order.applyUpdate(newOrder({ idempotencyKey: 'key-3' }), {
+            maxRevisions: 2,
+          }),
+        ).toThrow(RevisionLimitReachedError);
+      });
+
+      it('leaves the order untouched when the update is refused', () => {
+        const order = orderIn(OrderStatus.ENRICHED);
+        const before = order.toSnapshot();
+
+        expect(() => order.applyUpdate(changes, { maxRevisions: 1 })).toThrow(
+          RevisionLimitReachedError,
+        );
+        expect(order.toSnapshot()).toEqual(before);
+      });
     });
   });
 

@@ -82,6 +82,16 @@ export class ReprocessNotAllowedError extends Error {
  *       ↘          ↘
  *        FAILED_ENRICHMENT (failure.reason, failure.retryable)
  */
+export class RevisionLimitReachedError extends Error {
+  override name = 'RevisionLimitReachedError';
+  constructor(
+    readonly orderId: string,
+    readonly maxRevisions: number,
+  ) {
+    super(`Order ${orderId} reached the limit of ${maxRevisions} revisions`);
+  }
+}
+
 export class Order {
   private constructor(private state: OrderSnapshot) {}
 
@@ -207,8 +217,14 @@ export class Order {
   /**
    * Same order_id arriving with a new idempotency key, under ORDER_DUPLICATE_POLICY=update.
    * `requiresEnqueue` tells the caller whether a new enrichment job is needed.
+   *
+   * `maxRevisions` bounds how many keys an order accumulates and how many times a
+   * client (buggy or hostile) can push it back into the queue.
    */
-  applyUpdate(changes: NewOrderProps): { requiresEnqueue: boolean } {
+  applyUpdate(
+    changes: NewOrderProps,
+    { maxRevisions }: { maxRevisions: number },
+  ): { requiresEnqueue: boolean } {
     const data = Order.validated(changes);
     if (data.orderId !== this.orderId) {
       throw new InvalidOrderError(
@@ -217,6 +233,9 @@ export class Order {
     }
     if (this.status === OrderStatus.ENRICHING) {
       throw new OrderBeingProcessedError(this.orderId);
+    }
+    if (this.revision >= maxRevisions) {
+      throw new RevisionLimitReachedError(this.orderId, maxRevisions);
     }
 
     const requiresEnqueue = this.status !== OrderStatus.RECEIVED;
