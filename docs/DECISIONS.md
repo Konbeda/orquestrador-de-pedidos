@@ -167,7 +167,8 @@ ainda não tem autenticação), `user_agent`, `kind`, `errors` (os mesmos devolv
 | `orders` | `idempotency_keys` unique (multikey) | Idempotência: nenhuma chave em dois pedidos |
 | `orders` | `order_id` unique | Mesmo pedido com outra chave |
 | `orders` | `{ status, queue_checked_at }` | Varredura de órfãos (o índice já entrega a ordem do `sort`) |
-| `orders` | `{ status, failure.retryable, created_at: -1 }` | `GET /orders?status=` e varredura de reprocessamento |
+| `orders` | `{ status, _id: -1 }` | `GET /orders?status=`, mais recentes primeiro, com o cursor na mesma leitura |
+| `orders` | `{ status, failure.retryable, _id }` | Lote de reprocessamento, mais antigos primeiro |
 | `webhook_rejections` | `request_id` (não único: pode vir do cliente) | Consulta pontual do suporte |
 | `webhook_rejections` | `{ source, received_at }` | "Rejeições do cliente X no período" |
 | `webhook_rejections` | `received_at` TTL | Exportação por período + expurgo automático |
@@ -303,7 +304,7 @@ o adapter usa `k_` + base64url da chave: nunca numérico, sem `:`, sem colisão 
   a maioria dos jobs nem chega a chamar.
 - **Estado por processo:** cada instância tem seu circuito. Com várias instâncias, cada uma aprende sozinha que a
   Frankfurter caiu (algumas chamadas a mais). Circuito compartilhado (no Redis) fica como melhoria.
-- **Circuito aberto:** o worker devolve o job para a fila com `worker.rateLimit()` + `RateLimitError`,
+- **Circuito aberto:** o worker devolve o job para a fila com `queue.rateLimit()` + `RateLimitError`,
   **sem gastar tentativa**; o pedido continua `RECEIVED` e a fila volta a andar quando o circuito fecha.
 
 ### Cliente HTTP (`FrankfurterClient`)
@@ -368,7 +369,7 @@ nativo durante o atraso do nock dispara um `assert` interno do undici (erro solt
 - Roda nos processos com papel de processamento (`WORKER_ENABLED=true`). Várias instâncias varrendo ao mesmo tempo é
   seguro pelo dedup, só desperdiça consultas. Em produção: lock distribuído ou uma instância dedicada.
 - Log só quando agiu (pedidos reenfileirados) ou não conseguiu (fila fora, enqueue falhou); silêncio quando não havia nada.
-- Índice próprio `{ status, queue_checked_at }` (a definir junto com os demais no adapter Mongo).
+- Índice próprio `{ status, queue_checked_at }` (ver tabela de índices).
 
 ## API HTTP
 
